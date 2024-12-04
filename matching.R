@@ -18,7 +18,7 @@ mcns_fw_f2 <- mcns_fw_f1 %>% select(query, match, conmatch, cell_class, cell_typ
 mcns_fw_f2$match <- as.integer(mcns_fw_f2$match)
 mcns_fw_f2$conmatch <- as.integer(mcns_fw_f2$conmatch)
 
-
+print(1111)
 # First, merge to get the `match_type`
 mcns_fw_f3 <- mcns_fw_f2 %>%
   left_join(mba %>% select(bodyid, type), by = c("match" = "bodyid")) %>%
