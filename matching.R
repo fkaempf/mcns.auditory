@@ -7,6 +7,7 @@ mcns_fw_matching = readRDS("/Users/fkampf/Documents/matching/10_2024_matching.RD
 #arrow::write_feather(baker_neurons2, sink = 'baker_neurons2.feather')
 
 baker_neurons =read_feather("/Users/fkampf/Documents/matching/baker_neurons2.feather")
+baker_neurons = baker_neurons %>% rename('neuron_name'='Neuron name')
 keeps <- c("y", "a")
 mba = mcns_body_annotations()
 
@@ -38,6 +39,15 @@ baker2mcns_map  <- data.frame(
   cell_type = unique_cell_types
 )
 
+#reduce to unique celltypes in mcns_fw_matches
+mcns_fw_f3 <- mcns_fw_f3 %>%
+  group_by(fw_type) %>%
+  summarise(match_type = paste(unique(match_type), collapse = ", "),conn_match_type = paste(unique(conn_match_type), collapse = ", "))
+
+
+
+
+
 #first take where flywire and mcns type already match
 types.match.TRUE.bool <- replace(mba$type==mba$flywire_type,is.na(mba$type==mba$flywire_type),FALSE)
 types.match.TRUE.df <- mba %>% filter(types.match.TRUE.bool)
@@ -65,19 +75,13 @@ types.match.FALSE.names <- types.match.FALSE.names %>% filter(!(type %in% mcns_f
 print('Number of neurons matched')
 print((before_matching_n - nrow(types.match.FALSE.names))/before_matching_n)
 
-baker_neurons_matched_exist = baker_neurons %>% left_join(mcns_fw_f3.exist.matches%>%rename('match_type_exist'='type'),by=c('cell_type'='flywire_type')) %>% filter(is.na(match_type))
-baker_neurons_matched_both = baker_neurons %>% left_join(mcns_fw_f3.both.matches%>%rename('match_type_both'='match_type'),by=c('cell_type'='fw_type')) %>% filter(is.na(match_type))
-baker_neurons_matched_nblast = baker_neurons %>% left_join(mcns_fw_f3.nblast.matches%>%rename('match_type_nblast'='match_type'),by=c('cell_type'='fw_type')) %>% filter(is.na(match_type))
-baker_neurons_matched_conn = baker_neurons_matched %>% left_join(mcns_fw_f3.conn.matches%>%rename('match_type_conn'='match_type'),by=c('cell_type'='fw_type')) %>% filter(is.na(match_type))
+baker_neurons_matched_exist <- baker_neurons %>% left_join(mcns_fw_f3.exist.matches%>%rename('match_type_exist'='type'),by=c('cell_type'='flywire_type')) %>% filter(!is.na(match_type_exist))
+baker_neurons_matched_both<-baker_neurons %>% left_join(mcns_fw_f3.both.matches%>%rename('match_type_both'='match_type'),by=c('cell_type'='fw_type')) %>% filter(!is.na(match_type_both))
+baker_neurons_matched_nblast<-baker_neurons %>% left_join(mcns_fw_f3.nblast.matches%>%rename('match_type_nblast'='match_type'),by=c('cell_type'='fw_type')) %>% filter(!is.na(match_type_nblast))
+baker_neurons_matched_conn<-baker_neurons %>% left_join(mcns_fw_f3.conn.matches%>%rename('match_type_conn'='conn_match_type'),by=c('cell_type'='fw_type')) %>% filter(!is.na(match_type_conn))
+library(tidyr)
 
-
-#what I thought is correct
-test <- baker2mcns_map %>% 
-  left_join(mcns_fw_f3%>%
-              select(fw_type,match_type,conn_match_type),by=c('cell_type'='fw_type')) %>%
-  unique() %>%
-  filter(!is.na(cell_type)) %>%
-  filter(!is.na(match_type)&!is.na(conn_match_type)) %>%
-  group_by(cell_type)
-
-baker_neurons_matched <-baker_neurons %>% left_join(test,by = c('cell_type'='cell_type'))
+all_match = bind_rows(baker_neurons_matched_exist,baker_neurons_matched_both,baker_neurons_matched_nblast,baker_neurons_matched_conn) %>% 
+  unite('match_type',match_type_conn,match_type_nblast,match_type_both,match_type_exist,na.rm = TRUE)%>%
+  distinct()
+all = bind_rows(baker_neurons%>%filter(!neuron_name %in% all_match$neuron_name),all_match)
