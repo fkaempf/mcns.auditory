@@ -12,12 +12,17 @@ keeps <- c("y", "a")
 mba = mcns_body_annotations()
 
 #stolen code from bella https://flyconnectome.slack.com/archives/D07QR4DKDQE/p1733247921466259
-mcns_fw_f <- mcns_fw_matching %>% select(query, match, conmatch) %>%
-  mutate(query = gsub("_fw$", "", query)) %>% mutate(match = gsub("_mcns$", "", match)) %>% mutate(conmatch = gsub("_mcns$", "", conmatch))
+mcns_fw_f <- mcns_fw_matching %>% 
+  select(query, match, conmatch) %>%
+  mutate(query = gsub("_fw$", "", query)) %>%
+  mutate(match = gsub("_mcns$", "", match)) %>% 
+  mutate(conmatch = gsub("_mcns$", "", conmatch))
 
 mcns_fw_f1 <- add_celltype_info(mcns_fw_f, idcol = "query", table = "info")
 
-mcns_fw_f2 <- mcns_fw_f1 %>% select(query, match, conmatch, cell_class, cell_type, ito_lee_hemilineage) %>% rename("fw_hl" = "ito_lee_hemilineage", "fw_type" = "cell_type", "fw_class" = "cell_class")
+mcns_fw_f2 <- mcns_fw_f1 %>% 
+  select(query, match, conmatch, cell_class, cell_type, ito_lee_hemilineage) %>% 
+  rename("fw_hl" = "ito_lee_hemilineage", "fw_type" = "cell_type", "fw_class" = "cell_class")
 
 mcns_fw_f2$match <- as.integer(mcns_fw_f2$match)
 mcns_fw_f2$conmatch <- as.integer(mcns_fw_f2$conmatch)
@@ -36,7 +41,7 @@ mcns_fw_f3 <- mcns_fw_f3 %>%
 
 
 #get unique fw_types
-mcns_fw_f3<- mcns_fw_f3 %>% 
+mcns_fw_f4<- mcns_fw_f3 %>% 
   group_by(fw_type) %>% 
   summarise(
     conn_match_type_combined = ifelse(
@@ -49,6 +54,12 @@ mcns_fw_f3<- mcns_fw_f3 %>%
     )
   )
 
+mcns_fw_f3 %>% 
+  count(fw_type, conn_match_type, match_type) %>% 
+  group_by(fw_type) %>%
+  summarise(match_type=paste(na.omit(match_type), collapse = ", "),
+            conn_match_type=paste(na.omit(conn_match_type), collapse = ", "))
+  
 
 
 #get unique cell types that need to be matched from the baker neurons
@@ -62,6 +73,23 @@ print(nrow(baker2mcns.matches.df))
 mba.match_exist <-mba %>% 
   filter(flywire_type %in% baker2mcns.matches.df$cell_type_fw) %>%
   filter(!is.na(type) & !is.na(flywire_type))
+nrow(mba.match_exist)
+
+# option 1 ...
+mba.match_exist2 <-mba %>% 
+  filter((flywire_type %in% baker2mcns.matches.df$cell_type_fw & !is.na(flywire_type)) |
+           (!is.na(type) & type %in% baker2mcns.matches.df$cell_type_fw) )
+filter(!is.na(flywire_type))
+View(mba.match_exist2)
+
+# ... option2
+# make a new copy of mba (malecns annotations) with one column called "ptype"
+# which has the flywire type if that exists or the "type" column if not
+mba.pf=mba
+mba.pf$ptype=mcns_predict_type(mba, prefer.foreign = T)
+mba.match_exist3 <-mba.pf %>% 
+  filter(ptype %in% baker2mcns.matches.df$cell_type_fw & !is.na(ptype))
+nrow(mba.match_exist3)
 
 #join the values in that exist in mba
 baker2mcns.matches.df<- baker2mcns.matches.df %>% 
@@ -73,6 +101,27 @@ baker2mcns.matches.df<- baker2mcns.matches.df %>%
     TRUE ~ NA_character_  # Both are NA
   )) %>%
   select(-type.x, -type.y)
+
+
+#join the values in that exist in mba
+baker2mcns.matches.df2<- baker2mcns.matches.df %>% 
+  left_join(mba.match_exist3%>%select(ptype)%>%unique(), by = c('cell_type_fw'='ptype')) 
+
+
+# select malecns neurons that we can match to Baker neurons
+mba.match4 <- mba.match_exist3 %>% 
+  select(bodyid, ptype) %>% 
+  left_join(baker_neurons %>% distinct(cell_type, .keep_all = T), c("ptype"="cell_type")) %>% 
+  mutate(baker_type=sub("_[LR][0-9]*$", "", neuron_name)) %>% 
+  mutate(baker_type=sub("_[0-9]+$", "", baker_type))
+
+# let's look at second order neurons (that receive direct sensory input)
+mba.match4 %>% 
+  filter(baker_type %in% c("A1", "A2", "AVLP_pr23", "WV-WV", "GF", "B1", "B2"))
+
+mba.match4 %>% 
+  filter(grepl("WV", baker_type))
+
 print(nrow(baker2mcns.matches.df))
 
 
