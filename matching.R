@@ -76,11 +76,11 @@ mba.match_exist <-mba %>%
 nrow(mba.match_exist)
 
 # option 1 ...
-mba.match_exist2 <-mba %>% 
-  filter((flywire_type %in% baker2mcns.matches.df$cell_type_fw & !is.na(flywire_type)) |
-           (!is.na(type) & type %in% baker2mcns.matches.df$cell_type_fw) )
-filter(!is.na(flywire_type))
-View(mba.match_exist2)
+#mba.match_exist2 <-mba %>% 
+#  filter((flywire_type %in% baker2mcns.matches.df$cell_type_fw & !is.na(flywire_type)) |
+#           (!is.na(type) & type %in% baker2mcns.matches.df$cell_type_fw) )
+#filter(!is.na(flywire_type))
+#View(mba.match_exist2)
 
 # ... option2
 # make a new copy of mba (malecns annotations) with one column called "ptype"
@@ -120,34 +120,15 @@ mba.match4 %>%
   filter(baker_type %in% c("A1", "A2", "AVLP_pr23", "WV-WV", "GF", "B1", "B2"))
 
 mba.match4 %>% 
+  filter(baker_type %in% c("A1", "A2", "AVLP_pr23", "WV-WV", "GF", "B1", "B2")) %>% 
+  distinct(baker_type) %>%
+  arrange(baker_type)%>%
+  print()
+
+mba.match4 %>% 
   filter(grepl("WV", baker_type))
 
-print(nrow(baker2mcns.matches.df))
 
-
-#join the values in that were matched
-unmatched <-  baker2mcns.matches.df %>%
-  filter(is.na(type)) %>%
-  pull(cell_type_fw) 
-
-
-baker2mcns.matches.df <- baker2mcns.matches.df %>%
-  left_join(
-    mcns_fw_f3 %>%
-      filter(fw_type %in% unmatched) %>%
-      select(fw_type, match_type_combined, conn_match_type_combined) %>%
-      distinct(),  # Use distinct for deduplication
-    by = c('cell_type_fw' = 'fw_type')
-  ) %>%
-  mutate(
-    type = case_when(
-      !is.na(type) ~ type,  # Preserve existing type if non-NA
-      (match_type_combined == conn_match_type_combined)&(is.na(type)) ~ match_type_combined,  # Set type if both combined types match
-      (!is.na(match_type_combined))&(is.na(type))  ~ match_type_combined,  # Prioritize match_type_combined if available
-      (is.na(match_type_combined))&(is.na(type))  ~ conn_match_type_combined,  # Use conn_match_type_combined if match_type_combined is NA
-      TRUE ~ NA_character_  # Default to NA if no conditions are met
-    )
-  )
 
 
 
