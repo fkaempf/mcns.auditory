@@ -1,0 +1,226 @@
+---
+title: "exploratory_auditory"
+output: html_document
+---
+Import library
+```{r}
+library(malecns)
+library(coconatfly)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(plotly)
+
+synapse_threshold=5
+```
+
+
+
+Just fetch some johnston organ neurons
+```{r}
+
+sensory.all<-cf_meta(cf_ids(malecns='superclass:sensory'))
+sensory.johnston <- sensory.all%>%filter(grepl("JO-",type))
+sensory.johnston.song <- sensory.all%>%filter(grepl("JO-A|JO-B",otype))
+```
+
+
+
+
+Look at postsynaptic partners of all sensory.johnston.song since there have to be aLN and aPN1
+
+```{r}
+sensory.johnston.song.output <-cf_partners(cf_ids(malecns=sensory.johnston.song$id),partners = 'output',threshold=5)
+sensory.johnston.song.output.per.unique.cell <- sensory.johnston.song.output %>%
+  group_by(partner)%>%
+  summarize(total=sum(weight),type=first(type))
+#12865 looks promising like aPN1 from 10.1016/j.cub.2014.03.048
+```
+
+
+Look at the inputs of aPN1 if there are more JO-B and if aLN(al) works with it 
+
+```{r}
+input.CB2556 <- cf_partners(cf_ids(malecns='flywireType:CB2556'),partners = 'in',threshold=5) %>%
+  left_join(cf_partners(cf_ids(malecns='flywireType:CB2556'),
+                        threshold = synapse_threshold,
+                        partners = 'in')%>%
+              group_by(bodyid)%>%
+              summarize(total.input.to.post=sum(weight))%>%
+              as.data.frame(),
+            by='bodyid')%>%
+  left_join(cf_partners(cf_ids(malecns=cf_partners(cf_ids(malecns='flywireType:CB2556'),
+                                                   threshold = synapse_threshold,
+                                                   partners = 'in')%>%
+                                 pull(pre_id)%>%
+                                 unique()),
+                        threshold = synapse_threshold,
+                        partners = 'out')%>%
+              group_by(pre_id)%>%
+              summarize(total.output.by.pre=sum(weight))%>%
+              as.data.frame(),
+            by='pre_id')%>%
+  mutate(fraction.of.output=weight/total.output.by.pre,
+         fraction.of.input=weight/total.input.to.post)
+
+input.CB2556.summary.across.type.post_id <- input.CB2556%>% 
+  group_by(type,post_id) %>% 
+  summarize(total=sum(weight),
+            sum.fraction.output = sum(fraction.of.output),
+            sum.fraction.input = sum(fraction.of.input),
+            mean.fraction.output = mean(fraction.of.output),
+            mean.fraction.input = mean(fraction.of.input))
+
+input.CB2556.summary.across.type <- input.CB2556%>% 
+  group_by(type) %>% 
+  summarize(total=sum(weight),
+            sum.fraction.output = sum(fraction.of.output),
+            sum.fraction.input = sum(fraction.of.input),
+            mean.fraction.output = mean(fraction.of.output),
+            mean.fraction.input = mean(fraction.of.input))
+
+input.CB2556.summary.across.unique.pre.cell <- input.CB2556%>% 
+  group_by(pre_id) %>% 
+  summarize(total=sum(weight),
+            sum.fraction.output = sum(fraction.of.output),
+            sum.fraction.input = sum(fraction.of.input),
+            mean.fraction.output = mean(fraction.of.output),
+            mean.fraction.input = mean(fraction.of.input),
+            type=first(type))
+
+input.CB2556.summary.across.unique.post.cell <- input.CB2556%>% 
+  group_by(post_id) %>% 
+  summarize(total=sum(weight),
+            sum.fraction.output = sum(fraction.of.output),
+            sum.fraction.input = sum(fraction.of.input),
+            mean.fraction.output = mean(fraction.of.output),
+            mean.fraction.input = mean(fraction.of.input),
+            type=first(type))
+```
+
+
+Connectivity co clustering between flywire and malecns
+
+```{r}
+#aLN1 
+
+cf_cosine_plot(cf_ids(malecns="flywireType:CB2556",flywire="CB2556"),interactive=T,partners='out')
+cf_cosine_plot(cf_ids(malecns="flywireType:CB2556",flywire="CB2556"),interactive=T,partners='in')
+cf_cosine_plot(cf_ids(malecns="flywireType:CB1038",flywire="CB1038"),interactive=T,partners='out')
+cf_cosine_plot(cf_ids(malecns="flywireType:CB1038",flywire="CB1038"),interactive=T,partners='in')
+cf_cosine_plot(cf_ids(malecns="flywireType:CB1038",flywire="CB1038"),interactive=T,partners=c("outputs", "inputs"))
+
+```
+
+
+Try make a postsynaptic difference plot for these neurons
+
+
+```{r}
+#other potential auditory CB1076, CB3710, CB2521, CB1078, CB1425, 
+
+all.auditory.output <- cf_partners(c(cf_ids(malecns="flywireType:CB3207",
+                                            flywire="CB3207"),
+                                     cf_ids(malecns="flywireType:CB2380",
+                                            flywire="CB2380"),
+                                     cf_ids(malecns="flywireType:CB2556",
+                                            flywire="CB2556")),
+                                   partners='out',
+                                   threshold = synapse_threshold)
+
+all.auditory.type.summary <- all.auditory.output %>% 
+  left_join(cf_partners(all.auditory.output%>%
+                          pull(post_key)%>%
+                          unique(),
+                        threshold = synapse_threshold,
+                        partners = 'in')%>%
+              group_by(post_id)%>%
+              summarize(total.input.to.post=sum(weight))%>%
+              as.data.frame(),
+            by='post_id')%>%
+  left_join(cf_meta(all.auditory.output %>%
+                          filter(dataset=='malecns')%>%
+                          pull(post_key)%>%
+                          unique())%>%
+              mutate(id=as.integer(id))%>%
+              select(id,dimorphism,fruDsx,flywireType), 
+              by=c('post_id'='id'))%>%
+  mutate(fraction.of.input=weight/total.input.to.post)%>%
+  mutate(type = if_else(
+    type != flywireType & !is.na(flywireType),  # Condition: type differs & flywireType is not NA
+    if_else(grepl("[a-zA-Z]$", flywireType),    # If last character is a letter
+            substr(flywireType, 1, nchar(flywireType) - 1),  # Remove last character
+            flywireType),  # Otherwise, keep flywireType as is
+    type  # If condition is not met, keep the original type
+  ))%>%
+  mutate(type = if_else(grepl("[a-zA-Z]$", type),    # If last character is a letter
+            substr(type, 1, nchar(type) - 1),
+         type))%>%
+  group_by(type,dataset)%>%
+  summarize(total=sum(weight),
+            mean.fraction.of.input=mean(fraction.of.input),
+            sum.fraction.of.input=sum(fraction.of.input),
+            dimorphism=first(dimorphism))%>%
+  ungroup()%>%
+  complete(type, 
+           dataset, 
+           fill = list(total = 0)) %>%
+  arrange(desc(total))%>%
+  pivot_wider(id_cols = c(type, dimorphism),
+              names_from=dataset,
+              values_from = c(total,
+                              mean.fraction.of.input,
+                              sum.fraction.of.input))%>%
+  mutate(across(everything(),
+                ~ replace(., is.na(.), 0)))%>%
+  mutate(dimorphism=if_else(dimorphism==0,NA,dimorphism))
+
+
+p<-ggplot(all.auditory.type.summary, aes(x = total_malecns, 
+                                         y = total_flywire,
+                                         text=type,
+                                         color = dimorphism)) +
+  geom_point(size = 1, alpha = 0.7) +
+  theme_minimal() +
+  labs(title = "Absolute output to types by auditory aLNs and aPN1s",
+       x = "malecns",
+       y = "flywire",
+       color = "Dataset") +
+  geom_abline()+
+  theme_minimal()
+
+ggplotly(p, tooltip = "text")
+
+p<-ggplot(all.auditory.type.summary, aes(x = mean.fraction.of.input_malecns,
+                                         y = mean.fraction.of.input_flywire,
+                                         text=type,
+                                         color = dimorphism)) +
+  geom_point(size = 1, alpha = 0.7) +
+  theme_minimal() +
+  labs(title = "Mean fraction output to types by auditory aLNs and aPN1s",
+       x = "malecns",
+       y = "flywire",
+       color = "Dataset") +
+  geom_abline()+
+  theme_minimal()
+ggplotly(p, tooltip = "text")
+
+
+p<-ggplot(all.auditory.type.summary, aes(x = sum.fraction.of.input_malecns,
+                                         y = sum.fraction.of.input_flywire,
+                                         text=type,
+                                         color = dimorphism)) +
+  geom_point(size = 1, alpha = 0.7) +
+  theme_minimal() +
+  labs(title = "sum fraction output to types by auditory aLNs and aPN1s",
+       x = "malecns",
+       y = "flywire",
+       color = "Dataset") +
+  geom_abline()+
+  theme_minimal()
+ggplotly(p, tooltip = "text")
+
+```
+
+
+
