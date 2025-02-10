@@ -83,14 +83,14 @@ mba.match_exist <-mba %>%
 # ... option2
 # make a new copy of mba (malecns annotations) with one column called "ptype"
 # which has the flywire type if that exists or the "type" column if not
-#mba.pf=mba
-#mba.pf$ptype=mcns_predict_type(mba, prefer.foreign = T)
-#mba.match_exist3 <-mba.pf %>% 
-#  filter(ptype %in% baker2mcns.matches.df$cell_type_fw & !is.na(ptype))
-#nrow(mba.match_exist3)
+mba.pf=mba
+mba.pf$ptype=mcns_predict_type(mba, prefer.foreign = T)
+mba.match_exist2 <-mba.pf %>% 
+  filter(ptype %in% baker2mcns.matches.df$cell_type_fw & !is.na(ptype))
+nrow(mba.match_exist3)
 
 # select malecns neurons that we can match to Baker neurons
-mba.match4 <- mba.match_exist %>% 
+mba.match4 <- mba.match_exist2 %>% 
   select(bodyid, flywire_type) %>% 
   left_join(baker_neurons %>% distinct(cell_type, .keep_all = T), c("flywire_type"="cell_type"))
 #  mutate(baker_type=sub("_[LR][0-9]*$", "", neuron_name)) %>% 
@@ -102,8 +102,9 @@ expected_secondary <- c("A1", "A2", "AVLP_pr23", "WV-WV", "GF", "B1", "B2")
 mba.match5<- mba.match4 %>% 
   filter(grepl(paste(expected_secondary, collapse = "|") , neuron_name))%>%
   mutate(baker_type=sub("_[LR][0-9]*$", "", neuron_name)) %>% 
-  distinct(neuron_name,.keep_all = T)
-
+  distinct(bodyid,.keep_all = T) %>%
+  arrange(baker_type)
+#85
 
 
 
