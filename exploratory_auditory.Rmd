@@ -2,30 +2,32 @@
 title: "exploratory_auditory"
 output: html_document
 ---
+
 Import library
+
 ```{r}
+fafbseg::flywire_connectome_data("syn")
 library(malecns)
 library(coconatfly)
 library(dplyr)
 library(tidyr)
 library(ggplot2)
 library(plotly)
+library(stringr)
 
+library(tidygraph)
+library(ggraph)
 synapse_threshold=5
 ```
 
-
-
 Just fetch some johnston organ neurons
+
 ```{r}
 
 sensory.all<-cf_meta(cf_ids(malecns='superclass:sensory'))
 sensory.johnston <- sensory.all%>%filter(grepl("JO-",type))
 sensory.johnston.song <- sensory.all%>%filter(grepl("JO-A|JO-B",otype))
 ```
-
-
-
 
 Look at postsynaptic partners of all sensory.johnston.song since there have to be aLN and aPN1
 
@@ -37,8 +39,7 @@ sensory.johnston.song.output.per.unique.cell <- sensory.johnston.song.output %>%
 #12865 looks promising like aPN1 from 10.1016/j.cub.2014.03.048
 ```
 
-
-Look at the inputs of aPN1 if there are more JO-B and if aLN(al) works with it 
+Look at the inputs of aPN1 if there are more JO-B and if aLN(al) works with it
 
 ```{r}
 input.CB2556 <- cf_partners(cf_ids(malecns='flywireType:CB2556'),partners = 'in',threshold=5) %>%
@@ -98,7 +99,6 @@ input.CB2556.summary.across.unique.post.cell <- input.CB2556%>%
             type=first(type))
 ```
 
-
 Connectivity co clustering between flywire and malecns
 
 ```{r}
@@ -112,21 +112,96 @@ cf_cosine_plot(cf_ids(malecns="flywireType:CB1038",flywire="CB1038"),interactive
 
 ```
 
+Malecns flywire type matching
+
+```{r}
+data1.cb4090 <- cf_meta(cf_ids(flywire='malecns_type:CB4090')) %>%
+  rename_with(~ str_replace_all(.x, c(
+      "flywireType" = "flywire",
+      "flywire_type" = "flywire",
+      "hemibrainType" = "hemibrain",
+      "hemibrain_type" = "hemibrain",
+      'malecns_type' = 'malecns',
+      'malecns_type' = 'malecns',
+      "type" = 'type1'
+    )))%>%
+  select(any_of(c('id',
+                  'type1',
+                  'type2',
+                  'flywire',
+                  'hemibrain',
+                  'malecns')))
+
+data2.cb4090 <- cf_meta(cf_ids(malecns='flywireType:CB4090')) %>%
+  rename_with(~ str_replace_all(.x, c(
+      "flywireType" = "flywire",
+      "flywire_type" = "flywire",
+      "hemibrainType" = "hemibrain",
+      "hemibrain_type" = "hemibrain",
+      'malecns_type' = 'malecns',
+      'malecns_type' = 'malecns',
+      "type" = 'type2'
+    )))%>%
+  select(any_of(c('id',
+                  'type1',
+                  'type2',
+                  'flywire',
+                  'hemibrain',
+                  'malecns')))
+
+
+
+
+#create graph
+edges1 <- data1.cb4090 %>% 
+  pivot_longer(!id,
+               names_to = 'dataset',
+               values_to = "type")%>%
+  select(id,type)%>%
+  filter(!is.na(type))
+
+edges2 <- data2.cb4090 %>% 
+  pivot_longer(!id,
+               names_to = 'dataset',
+               values_to = "type")%>%
+  select(id,type)%>%
+  filter(!is.na(type))
+
+edges<-rbind(edges1,edges2)
+nodes<-  edges %>% 
+    pivot_longer(cols = everything(), values_to = "id")%>%
+  select(id)%>%
+    distinct()
+
+graph <- tbl_graph(nodes = nodes, edges = edges, directed = FALSE)
+ggraph(graph, layout = "fr") +
+    geom_edge_link(aes(), alpha = 0.5) +  # Draw edges
+    geom_node_point(size = 5, color = "blue") +  # Nodes as points
+    geom_node_text(aes(label = id), repel = TRUE) +  # Labels
+    theme_void()
+
+
+
+```
 
 Try make a postsynaptic difference plot for these neurons
 
-
 ```{r}
-#other potential auditory CB1076, CB3710, CB2521, CB1078, CB1425, 
+  #other potential aPN1 CB1076, CB3710, CB2521, CB1425, CB1078, CB1038
+  #other potential aLN CB1427
 
-all.auditory.output <- cf_partners(c(cf_ids(malecns="flywireType:CB3207",
-                                            flywire="CB3207"),
-                                     cf_ids(malecns="flywireType:CB2380",
-                                            flywire="CB2380"),
-                                     cf_ids(malecns="flywireType:CB2556",
-                                            flywire="CB2556")),
-                                   partners='out',
-                                   threshold = synapse_threshold)
+
+cell_types <- c("CB3207", "CB2380", "CB2556")  #Conservative
+cell_types <- c('CB1076', 'CB3710', 'CB2521', 'CB1425', 'CB1078', 'CB1038', 'CB1427', 'CB2556','CB2380','CB2556')  #ALL
+
+
+cf_list <- lapply(cell_types, function(ct) {
+  cf_ids(malecns = paste0("flywireType:", ct), flywire = ct)
+})
+
+all.auditory.output <- cf_partners(do.call(c, cf_list), partners = 'out', threshold = synapse_threshold)
+
+
 
 all.auditory.type.summary <- all.auditory.output %>% 
   left_join(cf_partners(all.auditory.output%>%
@@ -176,6 +251,11 @@ all.auditory.type.summary <- all.auditory.output %>%
   mutate(dimorphism=if_else(dimorphism==0,NA,dimorphism))
 
 
+```
+
+Scatter plot of inputs of male vs female auditory neurons
+
+```{r}
 p<-ggplot(all.auditory.type.summary, aes(x = total_malecns, 
                                          y = total_flywire,
                                          text=type,
@@ -221,6 +301,3 @@ p<-ggplot(all.auditory.type.summary, aes(x = sum.fraction.of.input_malecns,
 ggplotly(p, tooltip = "text")
 
 ```
-
-
-
