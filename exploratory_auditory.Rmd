@@ -1,9 +1,4 @@
----
-title: "exploratory_auditory"
-output: html_document
----
 
-Import library
 
 ```{r}
 fafbseg::flywire_connectome_data("syn")
@@ -14,7 +9,8 @@ library(tidyr)
 library(ggplot2)
 library(plotly)
 library(stringr)
-
+library(igraph)
+library(fafbseg)
 library(tidygraph)
 library(ggraph)
 synapse_threshold=5
@@ -99,90 +95,161 @@ input.CB2556.summary.across.unique.post.cell <- input.CB2556%>%
             type=first(type))
 ```
 
-Connectivity co clustering between flywire and malecns
+
+Matching function
 
 ```{r}
-#aLN1 
-
-cf_cosine_plot(cf_ids(malecns="flywireType:CB2556",flywire="CB2556"),interactive=T,partners='out')
-cf_cosine_plot(cf_ids(malecns="flywireType:CB2556",flywire="CB2556"),interactive=T,partners='in')
-cf_cosine_plot(cf_ids(malecns="flywireType:CB1038",flywire="CB1038"),interactive=T,partners='out')
-cf_cosine_plot(cf_ids(malecns="flywireType:CB1038",flywire="CB1038"),interactive=T,partners='in')
-cf_cosine_plot(cf_ids(malecns="flywireType:CB1038",flywire="CB1038"),interactive=T,partners=c("outputs", "inputs"))
-
-```
-
-Malecns flywire type matching
-
-```{r}
-data1.cb4090 <- cf_meta(cf_ids(flywire='malecns_type:CB4090')) %>%
-  rename_with(~ str_replace_all(.x, c(
+prepare_data <- function(dataset.name,partner.df,post_or_pre){
+  if (grepl(post_or_pre, 'post')) {post_or_pre='post_key'}
+  else {post_or_pre='pre_key'}
+  
+  data <- cf_meta(partner.df%>%
+                    filter(dataset==dataset.name)%>%
+                    pull(post_or_pre)%>% #should be post right now
+                    unique())%>%
+    mutate(id=as.character(id))%>%
+    rename_with(~ str_replace_all(.x, c(
       "flywireType" = "flywire",
       "flywire_type" = "flywire",
       "hemibrainType" = "hemibrain",
       "hemibrain_type" = "hemibrain",
       'malecns_type' = 'malecns',
       'malecns_type' = 'malecns',
-      "type" = 'type1'
+      "type" = 'type2',
+      'bodyid'='id'
     )))%>%
-  select(any_of(c('id',
-                  'type1',
-                  'type2',
-                  'flywire',
-                  'hemibrain',
-                  'malecns')))
+    select(any_of(c('id',
+                    'type1',
+                    'type2',
+                    'flywire',
+                    'hemibrain',
+                    'malecns')))
+  
+  return(data)
+}
 
-data2.cb4090 <- cf_meta(cf_ids(malecns='flywireType:CB4090')) %>%
-  rename_with(~ str_replace_all(.x, c(
-      "flywireType" = "flywire",
-      "flywire_type" = "flywire",
-      "hemibrainType" = "hemibrain",
-      "hemibrain_type" = "hemibrain",
-      'malecns_type' = 'malecns',
-      'malecns_type' = 'malecns',
-      "type" = 'type2'
-    )))%>%
-  select(any_of(c('id',
-                  'type1',
-                  'type2',
-                  'flywire',
-                  'hemibrain',
-                  'malecns')))
+make_edges <- function(data,sink_no=1){
+  data %>% 
+    pivot_longer(!id,
+                 names_to = 'dataset',
+                 values_to = "type")%>%
+    select(id,type)%>%
+    filter(!is.na(type))%>%
+    mutate(sink=sink_no)}
 
 
 
 
-#create graph
-edges1 <- data1.cb4090 %>% 
-  pivot_longer(!id,
-               names_to = 'dataset',
-               values_to = "type")%>%
-  select(id,type)%>%
-  filter(!is.na(type))
 
-edges2 <- data2.cb4090 %>% 
-  pivot_longer(!id,
-               names_to = 'dataset',
-               values_to = "type")%>%
-  select(id,type)%>%
-  filter(!is.na(type))
 
-edges<-rbind(edges1,edges2)
-nodes<-  edges %>% 
-    pivot_longer(cols = everything(), values_to = "id")%>%
-  select(id)%>%
-    distinct()
 
-graph <- tbl_graph(nodes = nodes, edges = edges, directed = FALSE)
-ggraph(graph, layout = "fr") +
-    geom_edge_link(aes(), alpha = 0.5) +  # Draw edges
-    geom_node_point(size = 5, color = "blue") +  # Nodes as points
-    geom_node_text(aes(label = id), repel = TRUE) +  # Labels
-    theme_void()
+match_cell_types <-function(partner.df,post_or_pre='post',flywire2mcns=T){
+  #format data
+  if (flywire2mcns){  
+    data1 <- prepare_data('flywire', partner.df,post_or_pre)
+    data2 <- prepare_data('malecns', partner.df,post_or_pre)}
+  else {  
+    data1 <- prepare_data('malecns', partner.df,post_or_pre)
+    data2 <- prepare_data('flywire', partner.df,post_or_pre)}
+  
+  
+
+  
+  #concat data
+  data.concat <- rbind(data1%>%
+                         rename('type'='type2')%>%
+                         select(id,type),
+                       data2%>%
+                         rename('type'='type2')%>%
+                         select(id,type))
+  
+  #make edges
+  edges1 <- make_edges(data1,'1')
+  edges2 <- make_edges(data2,'2')
+  edges<-rbind(edges1,edges2)
+  
+  #make nodes from edges
+  nodes<-  edges %>% 
+    pivot_longer(cols = c('id','type'), values_to = "name",names_to = 'type')%>%
+    mutate(node_type=if_else(type=='type',
+                             'cell_type',
+                             str_c("sink_", sink)))%>%
+    select(name, node_type)%>%
+    distinct(name,.keep_all = T)
+  
+  #create graph
+  graph <- tbl_graph(nodes = nodes, edges = edges, directed = FALSE)
+  
+  # Process graph distances
+  graph.distances <- data.frame(distances(graph))
+  colnames(graph.distances)<- nodes$name
+  rownames(graph.distances)<- nodes$name
+  
+  graph.distances.sink2sink <- graph.distances[nodes$node_type=='sink_1',nodes$node_type=='sink_2']
+  rownames(graph.distances.sink2sink)<- nodes$name[nodes$node_type=='sink_1']
+  colnames(graph.distances.sink2sink)<- nodes$name[nodes$node_type=='sink_2']
+  
+  column.indices.shortest.path <- sapply(rownames(graph.distances.sink2sink), function(x) {
+    temp <- graph.distances.sink2sink[x, , drop = FALSE]
+    
+    if(length(unique(temp)) == 1) {
+      return(NA) 
+    } else {
+      min_col <- which(temp == min(temp), arr.ind = TRUE)[1,][2]
+      
+      if (temp[1, min_col] == Inf) {
+        return(NA)
+      }
+      
+      return(min_col)
+    }
+  })
+  column.indices.shortest.path <- setNames(column.indices.shortest.path, rownames(graph.distances.sink2sink))
+  
+  matched.type.list<-list()
+  
+  
+  for (x in rownames(graph.distances.sink2sink)) {
+    
+    
+    
+    if (is.na(column.indices.shortest.path[x])) {
+      
+      print('No matched type')
+      matched.type = data.concat%>%filter(id==x)%>%pull(type)
+      
+    }
+    else{
+      node1 <- x
+      node2 <- colnames(graph.distances.sink2sink)[column.indices.shortest.path[x]]
+      
+      # Get the shortest path once
+      path <- shortest_paths(graph, from = node1, to = node2)
+      
+      matched.type <- V(graph)$name[path$vpath[[1]][length(path$vpath[[1]]) - 1]]
+      if(length(matched.type)==0){readline()
+        
+      }
+    }
+    
+    matched.type.list <- append(matched.type.list, list(matched.type))
+    
+  }
+  matched.join.df <-  data.frame(id = rownames(graph.distances.sink2sink), match.type = as.character(matched.type.list))
+  
+  result<- rbind(data1%>%
+                   left_join(matched.join.df,by='id')%>%
+                   select(id,match.type),
+                 data2%>%rename('match.type'='type2')%>%
+                   select(id,match.type))
+  return(result)
+  
+}
 
 
 
 ```
+
 
 Try make a postsynaptic difference plot for these neurons
 
@@ -190,65 +257,152 @@ Try make a postsynaptic difference plot for these neurons
   #other potential aPN1 CB1076, CB3710, CB2521, CB1425, CB1078, CB1038
   #other potential aLN CB1427
 
-
 cell_types <- c("CB3207", "CB2380", "CB2556")  #Conservative
 cell_types <- c('CB1076', 'CB3710', 'CB2521', 'CB1425', 'CB1078', 'CB1038', 'CB1427', 'CB2556','CB2380','CB2556')  #ALL
+#cell_types <- c('CB2364', 'CB2763', 'CB2253', 'CB1614')  #asp k
+
+#aln al 'CB2380', 'CB1427', 'CB3207'
+#apn : 'CB1076', 'CB3710', 'CB2521', 'CB1425', 'CB1078', 'CB1038', 'CB2556','CB2556'
 
 
 cf_list <- lapply(cell_types, function(ct) {
   cf_ids(malecns = paste0("flywireType:", ct), flywire = ct)
 })
 
-all.auditory.output <- cf_partners(do.call(c, cf_list), partners = 'out', threshold = synapse_threshold)
+#all.auditory.output <- cf_partners(do.call(c, cf_list), partners = 'out', threshold = synapse_threshold)%>%
+#  mutate(post_id=as.character(post_id))
 
 
 
-all.auditory.type.summary <- all.auditory.output %>% 
-  left_join(cf_partners(all.auditory.output%>%
-                          pull(post_key)%>%
-                          unique(),
-                        threshold = synapse_threshold,
-                        partners = 'in')%>%
-              group_by(post_id)%>%
-              summarize(total.input.to.post=sum(weight))%>%
-              as.data.frame(),
-            by='post_id')%>%
-  left_join(cf_meta(all.auditory.output %>%
-                          filter(dataset=='malecns')%>%
-                          pull(post_key)%>%
-                          unique())%>%
-              mutate(id=as.integer(id))%>%
-              select(id,dimorphism,fruDsx,flywireType), 
-              by=c('post_id'='id'))%>%
-  mutate(fraction.of.input=weight/total.input.to.post)%>%
-  mutate(type = if_else(
-    type != flywireType & !is.na(flywireType),  # Condition: type differs & flywireType is not NA
-    if_else(grepl("[a-zA-Z]$", flywireType),    # If last character is a letter
-            substr(flywireType, 1, nchar(flywireType) - 1),  # Remove last character
-            flywireType),  # Otherwise, keep flywireType as is
-    type  # If condition is not met, keep the original type
-  ))%>%
-  mutate(type = if_else(grepl("[a-zA-Z]$", type),    # If last character is a letter
-            substr(type, 1, nchar(type) - 1),
-         type))%>%
-  group_by(type,dataset)%>%
-  summarize(total=sum(weight),
-            mean.fraction.of.input=mean(fraction.of.input),
-            sum.fraction.of.input=sum(fraction.of.input),
-            dimorphism=first(dimorphism))%>%
+#result.f2m <- match_cell_types(all.auditory.output, 'post',flywire2mcns=T)%>%rename('match.type.f2m'='match.type')
+#all.auditory.output.match <- all.auditory.output %>%left_join(result.f2m,by=c('post_id'='id'))
+#all.auditory.output$type <- all.auditory.output.match$match.type.f2m
+
+
+
+first_non_zero <- function(x) {
+  if (is.numeric(x)) {
+    non_zero <- x[x != 0]
+    if (length(non_zero) > 0) {
+      return(non_zero[1])
+    } else {
+      return(0)
+    }
+  } else if (is.character(x)) {
+    non_zero <- x[x != ""]  # for character columns, assuming empty strings are the "zero"
+    if (length(non_zero) > 0) {
+      return(non_zero[1])
+    } else {
+      return("")
+    }
+  } else {
+    return(NA)  # Return NA for unsupported types
+  }
+}
+
+
+# Extract unique post_keys from the dataset
+auditory.downstream.unique.keys <- all.auditory.output %>%
+  pull(post_key) %>%
+  unique()
+
+# Compute total input to each post
+auditory.downstream.inputs <- cf_partners(auditory.downstream.unique.keys, 
+                             threshold = synapse_threshold, 
+                             partners = 'in') %>%
+  mutate(post_id=as.character(post_id))%>%
+  group_by(post_id) %>%
+  summarize(total.input.to.post = sum(weight),
+            .groups = 'drop')%>%
+  left_join(cf_meta(auditory.downstream.unique.keys)%>%
+              select(id,type,dataset),
+            by=c('post_id'='id'))%>%
   ungroup()%>%
+  group_by(type, dataset) %>%
+  mutate(total.input.to.type = sum(total.input.to.post)) %>%
+  ungroup()%>%
+  rename('typo'='type')%>%
+  select(post_id,
+         total.input.to.type,
+         total.input.to.post,
+         typo)
+
+# Get meta of downstream
+auditory.downstream.flywire.meta <- cf_meta(all.auditory.output %>%
+                          filter(dataset == 'flywire') %>%
+                          pull(post_key) %>%
+                          unique()) %>%
+  select(id, malecns_type)
+
+auditory.downstream.malecns.meta <- mcns_body_annotations() %>%
+  select(bodyid, 
+         dimorphism, 
+         fru_dsx, 
+         flywire_type, 
+         synonyms) %>%
+  mutate(bodyid = as.character(bodyid))
+
+# Merge all information
+all.auditory.type.summary <- all.auditory.output %>%
+  mutate(post_id = as.character(post_id)) %>%
+  left_join(auditory.downstream.inputs,
+            by = "post_id") %>%
+  mutate(post_id = as.character(post_id)) %>%
+  left_join(auditory.downstream.flywire.meta, 
+            by = c("post_id" = "id")) %>%
+  left_join(auditory.downstream.malecns.meta, 
+            by = c("post_id" = "bodyid")) %>%
+  mutate(fraction.of.input.per.cell = weight / total.input.to.post,
+         fraction.of.input.per.type = weight / total.input.to.type,
+         type = coalesce(flywire_type, 
+                         malecns_type, 
+                         type)) %>%
+  group_by(type, dataset) %>%
+  summarize(
+    total = sum(weight),
+    mean.fraction.of.input.per.cell = mean(fraction.of.input.per.cell, 
+                                  na.rm = TRUE),
+    sum.fraction.of.input.per.cell = sum(fraction.of.input.per.cell, 
+                                na.rm = TRUE),
+    mean.fraction.of.input.per.type = mean(fraction.of.input.per.type, 
+                                  na.rm = TRUE),
+    sum.fraction.of.input.per.type = sum(fraction.of.input.per.type, 
+                                na.rm = TRUE),
+    n=n(),
+    dimorphism = first(dimorphism),
+    fru_dsx = first(fru_dsx),
+    synonyms = first(synonyms),
+    .groups = 'drop') %>%
   complete(type, 
            dataset, 
            fill = list(total = 0)) %>%
-  arrange(desc(total))%>%
-  pivot_wider(id_cols = c(type, dimorphism),
-              names_from=dataset,
-              values_from = c(total,
-                              mean.fraction.of.input,
-                              sum.fraction.of.input))%>%
-  mutate(across(everything(),
-                ~ replace(., is.na(.), 0)))%>%
-  mutate(dimorphism=if_else(dimorphism==0,NA,dimorphism))
+  arrange(desc(total)) %>%
+  pivot_wider(
+    id_cols = c(type, 
+                dimorphism, 
+                fru_dsx, 
+                synonyms),
+    names_from = dataset,
+    values_from = c(total, 
+                    mean.fraction.of.input.per.cell, 
+                    sum.fraction.of.input.per.cell,
+                    mean.fraction.of.input.per.type, 
+                    sum.fraction.of.input.per.type,
+                    n)
+  ) %>%
+  mutate(
+    across(where(is.numeric), 
+           ~ replace_na(.x,
+                        0)), # Replace NA with 0 for numeric columns
+    across(where(is.character), 
+           ~ replace_na(.x,
+                        "Unknown")) # Replace NA with "Unknown" for character columns
+  ) %>%
+  group_by(type) %>%
+  summarize(across(everything(), first_non_zero), 
+            .groups = 'drop') %>%
+  mutate(m_f_ratio = total_malecns / total_flywire)
+
 
 
 ```
@@ -256,25 +410,77 @@ all.auditory.type.summary <- all.auditory.output %>%
 Scatter plot of inputs of male vs female auditory neurons
 
 ```{r}
-p<-ggplot(all.auditory.type.summary, aes(x = total_malecns, 
+
+
+p<-ggplot(all.auditory.type.summary%>%mutate(dimorphism=if_else(dimorphism==0,NA,dimorphism)), aes(x = total_malecns, 
                                          y = total_flywire,
                                          text=type,
-                                         color = dimorphism)) +
+                                         color = fru_dsx)) +
   geom_point(size = 1, alpha = 0.7) +
   theme_minimal() +
   labs(title = "Absolute output to types by auditory aLNs and aPN1s",
-       x = "malecns",
-       y = "flywire",
+       x = "total_malecns",
+       y = "total_flywire",
        color = "Dataset") +
   geom_abline()+
   theme_minimal()
 
 ggplotly(p, tooltip = "text")
 
-p<-ggplot(all.auditory.type.summary, aes(x = mean.fraction.of.input_malecns,
-                                         y = mean.fraction.of.input_flywire,
+
+p<-ggplot(all.auditory.type.summary%>%mutate(dimorphism=if_else(dimorphism==0,NA,dimorphism)), aes(x = total_malecns/n_malecns, 
+                                         y = total_flywire/n_flywire,
                                          text=type,
-                                         color = dimorphism)) +
+                                         color = fru_dsx)) +
+  geom_point(size = 1, alpha = 0.7) +
+  theme_minimal() +
+  labs(title = "Absolute output to types by auditory aLNs and aPN1s",
+       x = "total_malecns normed",
+       y = "total_flywire normed",
+       color = "Dataset") +
+  geom_abline()+
+  theme_minimal()
+
+ggplotly(p, tooltip = "text")
+
+
+
+
+p<-ggplot(all.auditory.type.summary%>%mutate(dimorphism=if_else(dimorphism==0,NA,dimorphism)), aes(x = total_malecns-total_flywire, 
+                                         y = m_f_ratio,
+                                         text=type,
+                                         color = fru_dsx)) +
+  geom_point(size = 1, alpha = 0.7) +
+  theme_minimal() +
+  labs(title = "Absolute output to types by auditory aLNs and aPN1s",
+       x = "delta (mcns-fafb)",
+       y = "ratio (mcns/fafb)",
+       color = "Dataset") +
+  theme_minimal()
+
+ggplotly(p, tooltip = "text")
+
+flytable<-flytable_query("select * from info")
+
+p<-ggplot(all.auditory.type.summary%>%mutate(dimorphism=if_else(dimorphism==0,NA,dimorphism)), aes(x = (total_malecns/n_malecns)-(total_flywire/n_flywire), 
+                                         y = m_f_ratio,
+                                         text=type,
+                                         color = fru_dsx)) +
+  geom_point(size = 1, alpha = 0.7) +
+  theme_minimal() +
+  labs(title = "Absolute output to types by auditory aLNs and aPN1s",
+       x = "delta normed by n of type (mcns-fafb)",
+       y = "ratio (mcns/fafb)",
+       color = "Dataset") +
+  theme_minimal()
+
+ggplotly(p, tooltip = "text")
+
+
+p<-ggplot(all.auditory.type.summary%>%mutate(dimorphism=if_else(dimorphism==0,NA,dimorphism)), aes(x = mean.fraction.of.input.per.type_malecns,
+                                         y = mean.fraction.of.input.per.type_flywire,
+                                         text=type,
+                                         color = fru_dsx)) +
   geom_point(size = 1, alpha = 0.7) +
   theme_minimal() +
   labs(title = "Mean fraction output to types by auditory aLNs and aPN1s",
@@ -286,10 +492,10 @@ p<-ggplot(all.auditory.type.summary, aes(x = mean.fraction.of.input_malecns,
 ggplotly(p, tooltip = "text")
 
 
-p<-ggplot(all.auditory.type.summary, aes(x = sum.fraction.of.input_malecns,
-                                         y = sum.fraction.of.input_flywire,
+p<-ggplot(all.auditory.type.summary%>%mutate(dimorphism=if_else(dimorphism==0,NA,dimorphism)), aes(x = sum.fraction.of.input.per.type_malecns,
+                                         y = sum.fraction.of.input.per.type_flywire,
                                          text=type,
-                                         color = dimorphism)) +
+                                         color = fru_dsx)) +
   geom_point(size = 1, alpha = 0.7) +
   theme_minimal() +
   labs(title = "sum fraction output to types by auditory aLNs and aPN1s",
@@ -301,3 +507,70 @@ p<-ggplot(all.auditory.type.summary, aes(x = sum.fraction.of.input_malecns,
 ggplotly(p, tooltip = "text")
 
 ```
+
+
+
+
+See where the input to vpoIN in female comes from
+
+
+```{r}
+
+
+library(fafbseg)
+mba<-mcns_body_annotations()
+flytable_reduced<-flytable_query("select * from info")%>%select(root_id,cell_class,cell_type,hemibrain_type,malecns_type)%>%rename('cell_class_post'='cell_class','hemibrain_type_post'='hemibrain_type','malecns_type_post'='malecns_type')
+input.vpoIN.level1<-cf_partners(c(cf_ids(flywire='AVLP008'),
+              cf_ids(flywire='CB1385'),
+              cf_ids(flywire='LHAV4c2'),
+              cf_ids(flywire='LHAV4j1')),
+            partners='in',threshold=5)%>%
+            mutate(post_id=as.character(post_id))%>%
+            left_join(flytable_reduced,by=c('post_id'='root_id'))%>%
+            group_by(type)%>%
+            summarize(total=sum(weight),
+            post_cell_class=first(cell_class_post),
+            post_cell_type=first(cell_type),
+            post_malecns_type=first(malecns_type_post),
+            post_hemibrain_type=first(hemibrain_type_post))%>%
+            arrange(desc(total))
+level.types<- (input.vpoIN.level1%>%pull(type))[1:10]%>%as.list
+cf_list_flywire <- lapply(level.types, function(ct) {
+  cf_ids(flywire = ct)
+})
+
+input.vpoIN.level2<-cf_partners(do.call(c, cf_list_flywire),
+                                partners='in',
+                                threshold=5)%>%
+            mutate(post_id=as.character(post_id))%>%
+            left_join(flytable_reduced,by=c('post_id'='root_id'))%>%
+            group_by(type)%>%
+            summarize(total=sum(weight),
+            post_cell_class=first(cell_class_post),
+            post_cell_type=first(cell_type),
+            post_malecns_type=first(malecns_type_post),
+            post_hemibrain_type=first(hemibrain_type_post))%>%
+            arrange(desc(total))
+            
+level.types<- (input.vpoIN.level2%>%pull(type))[1:10]%>%as.list
+cf_list_flywire <- lapply(level.types, function(ct) {
+  cf_ids(flywire = ct)
+})
+input.vpoIN.level3<-cf_partners(do.call(c, cf_list_flywire),
+                                partners='in',
+                                threshold=5)%>%
+                                group_by(type)%>%
+            summarize(total=sum(weight))%>%
+            arrange(desc(total))
+
+```
+
+Make a connectitiy matrix for the circuit
+
+```{r}
+cf_partner_summary(cf_ids(malecns='flywireType:CB1078'),threshold=5,partners = 'out')%>%
+  mutate(weight_normed_by_post_n=weight/npost)%>%
+  arrange(desc(weight_normed_by_post_n))%>%
+  View()
+```
+
