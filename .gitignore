@@ -2,3 +2,5 @@
 .Rhistory
 .RData
 .Ruserdata
+*.lsm
+*.lsm.bz2
