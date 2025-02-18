@@ -250,6 +250,25 @@ match_cell_types <-function(partner.df,post_or_pre='post',flywire2mcns=T){
 
 ```
 
+test
+```{r}
+cell_types <- c('CB1076', 'CB3710', 'CB2521', 'CB1425', 'CB1078', 'CB1038', 'CB1427', 'CB2556','CB2380','CB2556')  #ALL
+id <-cf_ids(malecns=mba%>%
+              filter(flywire_type %in% cell_types)%>%
+              pull(bodyid))
+cfp<-cf_partners(id,
+                 partners='out',
+                 threshold=5)%>%
+  group_by(type)%>%
+  summarize(total=sum(weight))
+mcnst<-mcns_connection_table(id,
+                             partners='out',
+                             threshold=5)%>%
+  group_by(type)%>%
+  summarize(total=sum(weight))
+```
+
+
 
 Try make a postsynaptic difference plot for these neurons
 
@@ -258,25 +277,26 @@ Try make a postsynaptic difference plot for these neurons
   #other potential aLN CB1427
 
 cell_types <- c("CB3207", "CB2380", "CB2556")  #Conservative
-cell_types <- c('CB1076', 'CB3710', 'CB2521', 'CB1425', 'CB1078', 'CB1038', 'CB1427', 'CB2556','CB2380','CB2556')  #ALL
+cell_types <- c('CB1076', 'CB3710', 'CB2521', 'CB1425','CB1542', 'CB1078', 'CB1038', 'CB1427', 'CB2556','CB2380','CB2556')  #ALL
 #cell_types <- c('CB2364', 'CB2763', 'CB2253', 'CB1614')  #asp k
 
-#aln al 'CB2380', 'CB1427', 'CB3207'
+#aln al 'CB2380', 'CB1427', 'CB3207')
 #apn : 'CB1076', 'CB3710', 'CB2521', 'CB1425', 'CB1078', 'CB1038', 'CB2556','CB2556'
 
+cell_types <- c('CB1076', 'CB3710', 'CB2521', 'CB1425', 'CB1078', 'CB1038', 'CB1427', 'CB2556','CB2380','CB2556')  #ALL
 
 cf_list <- lapply(cell_types, function(ct) {
-  cf_ids(malecns = paste0("flywireType:", ct), flywire = ct)
+  cf_ids(malecns = paste0("flywireType:", ct),flywire = ct)
 })
 
-#all.auditory.output <- cf_partners(do.call(c, cf_list), partners = 'out', threshold = synapse_threshold)%>%
-#  mutate(post_id=as.character(post_id))
+all.auditory.output <- cf_partners(do.call(c, cf_list), partners = 'out', threshold = synapse_threshold)%>%
+  mutate(post_id=as.character(post_id))
 
 
 
-#result.f2m <- match_cell_types(all.auditory.output, 'post',flywire2mcns=T)%>%rename('match.type.f2m'='match.type')
-#all.auditory.output.match <- all.auditory.output %>%left_join(result.f2m,by=c('post_id'='id'))
-#all.auditory.output$type <- all.auditory.output.match$match.type.f2m
+#result.m2f <- match_cell_types(all.auditory.output, 'post',flywire2mcns=F)%>%rename('match.type.m2f'='match.type')
+#all.auditory.output.match <- all.auditory.output %>%left_join(result.m2f,by=c('post_id'='id'))
+#all.auditory.output$type <- all.auditory.output.match$match.type.m2f
 
 
 
@@ -565,12 +585,101 @@ input.vpoIN.level3<-cf_partners(do.call(c, cf_list_flywire),
 
 ```
 
-Make a connectitiy matrix for the circuit
+Make a connectitiy matrix for the circuit flywire
 
 ```{r}
-cf_partner_summary(cf_ids(malecns='flywireType:CB1078'),threshold=5,partners = 'out')%>%
-  mutate(weight_normed_by_post_n=weight/npost)%>%
-  arrange(desc(weight_normed_by_post_n))%>%
-  View()
-```
 
+
+library(pheatmap)
+library(reshape2)
+
+cell_types.level1 <- c('CB1076', 'CB3710', 'CB2521', 'CB1425', 'CB1078', 'CB1038', 'CB1427', 'CB2556','CB2380','CB2556')
+
+#level 1 fw
+cf_list.level1.fw <- lapply(cell_types, function(ct) {
+  cf_ids(flywire = ct)
+})
+level1.fw.cm <- cf_partner_summary(do.call(c, cf_list.level1.fw), 
+                                          partners = 'out', 
+                                          threshold = synapse_threshold,
+                                          normalise = T, 
+                                          aggregate.query = T)%>%
+  arrange(desc(weight))%>%
+  filter(weight>0.025)
+
+
+#level 2 fw
+cell_types.level2.fw <- c(cell_types.level1,
+                          (level1.fw.cm%>%filter(!type.post %in% cell_types.level1))[1:10,]%>%pull(type.post))
+cf_list.level2.fw <- lapply(cell_types.level2.fw, function(ct) {
+  cf_ids(flywire = ct)
+})
+
+level2.fw.cm <- cf_partner_summary(do.call(c, cf_list.level2.fw), 
+                                          partners = 'out', 
+                                          threshold = synapse_threshold,
+                                          normalise = T, 
+                                          aggregate.query = T)%>%
+  arrange(desc(weight))%>%
+  filter(weight>0.025)
+
+#effective calc
+connected.init.lv2 <- level2.fw.cm%>%filter(type.pre %in% cell_types.level1) %>% pull(type.post)
+
+#level 3 fw
+cell_types.level3.fw <- cell_types.level2.fw <- c(cell_types.level2.fw,
+                                                  (level2.fw.cm%>%filter(!type.post %in% cell_types.level2.fw))[1:10,]%>%pull(type.post))
+
+cf_list.level3.fw <- lapply(cell_types.level3.fw, function(ct) {
+  cf_ids(flywire = ct)
+})
+
+level3.fw.cm <- cf_partner_summary(do.call(c, cf_list.level3.fw), 
+                                          partners = 'out', 
+                                          threshold = synapse_threshold,
+                                          normalise = T, 
+                                          aggregate.query = T)%>%
+  arrange(desc(weight))
+ 
+level3.fw.cm <- level3.fw.cm %>% filter(type.post %in% (level3.fw.cm%>%filter(weight>0.01)%>%pull(type.post)))
+conn_matrix <- dcast(level3.fw.cm, type.pre ~ type.post, value.var = "weight", fill = 0)
+
+rownames(conn_matrix) <- conn_matrix$type.pre
+conn_matrix <- conn_matrix[, -1]  # Remove the type.pre column as it's now row names
+library()
+pheatmap(conn_matrix, cluster_rows = T, cluster_cols = T, display_numbers = F,fontsize_col = 3,angle_col=90)
+
+
+
+
+```
+connectivity matrix malecns
+
+```{r}
+
+
+library(pheatmap)
+library(reshape2)
+
+cell_types.level1 <- c('CB1076', 'CB3710', 'CB2521', 'CB1425', 'CB1078', 'CB1038', 'CB1427', 'CB2556','CB2380','CB2556')
+
+#level 1 fw
+cf_list.level1.mcns <- lapply(cell_types, function(ct) {
+  cf_ids(malecns = paste0("flywireType:", ct))
+})
+
+
+level1.fw.cm <- cf_partner_summary(do.call(c, cf_list.level1.mcns), 
+                                          partners = 'out', 
+                                          threshold = synapse_threshold,
+                                          normalise = T, 
+                                          aggregate.query = T)%>%
+  arrange(desc(weight))%>%
+  filter(weight>0.01)
+
+
+
+
+
+
+```
