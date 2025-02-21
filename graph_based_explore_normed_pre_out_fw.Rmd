@@ -1,0 +1,482 @@
+---
+title: "graph_based_explore"
+output: html_document
+---
+
+load dependencies
+
+```{r}
+fafbseg::flywire_connectome_data("syn")
+library(malecns)
+library(coconatfly)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(plotly)
+library(stringr)
+library(igraph)
+library(fafbseg)
+library(tidygraph)
+library(ggraph)
+synapse_threshold=5
+mba<-mcns_body_annotations()
+mba.type.coalesced <-  mba %>%
+  mutate(type = coalesce(type, 
+                         flywire_type, 
+                         hemibrain_type, 
+                         manc_type))
+
+
+flytable<-flytable_query("select * from info")
+flytable.cell_type.coalesced <-  flytable %>%
+  mutate(cell_type = coalesce(cell_type, 
+                         malecns_type, 
+                         hemibrain_type),
+         top_nt=top_nt)
+mba_synonyms <- mba%>%select(bodyid,type,flywire_type,synonyms)
+```
+
+Create a graph of 4 layers and then find the strongest path from sink to sink
+
+
+Create graph for malecns and weighted
+```{r}
+#cells
+cell_types <- c('CB1076','CB1078', 'CB3710', 'CB2521','CB1542', 'CB1038', 'CB1427', 'CB2556', 'CB2380')
+
+
+
+#level 1
+level1.prout.fw.ids <-cf_ids(flywire = flytable.cell_type.coalesced%>%
+                               filter(cell_type %in% cell_types)%>%
+                               pull(root_id)%>%
+                               unique())
+level1.prout.fw.pre.output <- cf_partners(level1.prout.fw.ids, 
+                                                      partners = 'out', 
+                                                      threshold = synapse_threshold)%>%
+  mutate(pre_id = as.character(pre_id))%>%
+  left_join(flytable.cell_type.coalesced%>%
+              select(root_id,cell_type,dimorphism)%>%
+              rename('pre_type'='cell_type'),
+            by=c('pre_id'='root_id'))%>%
+  group_by(pre_type)%>%
+  summarize(syn.pre=sum(weight))
+
+
+level1.prout.fw.output <- cf_partner_summary(level1.prout.fw.ids, 
+                                               partners = 'out', 
+                                               threshold = synapse_threshold,
+                                               normalise = F,
+                                               aggregate.query=T)%>%
+  filter(!is.na(type.post))%>%
+  left_join(level1.prout.fw.pre.output,by=c('type.pre'='pre_type'))%>%
+  mutate(weight=weight/syn.pre)%>%
+  filter(weight>=0.01)
+
+
+
+
+#level 2
+
+level2.prout.fw.ids <-cf_ids(flywire = flytable.cell_type.coalesced%>%
+                               filter(cell_type %in% (level1.prout.fw.output%>%
+                                                                 pull(type.post)%>%
+                                                                 unique()))%>%
+                               pull(root_id)%>%
+                               unique())
+
+
+level2.prout.fw.pre.output <- cf_partners(level2.prout.fw.ids, 
+                                                      partners = 'out', 
+                                                      threshold = synapse_threshold)%>%
+  mutate(pre_id = as.character(pre_id))%>%
+  left_join(flytable.cell_type.coalesced%>%
+              select(root_id,cell_type,dimorphism)%>%
+              rename('pre_type'='cell_type'),
+            by=c('pre_id'='root_id'))%>%
+  group_by(pre_type)%>%
+  summarize(syn.pre=sum(weight))
+
+
+level2.prout.fw.output <- cf_partner_summary(level2.prout.fw.ids, 
+                                               partners = 'out', 
+                                               threshold = synapse_threshold,
+                                               normalise = F,
+                                               aggregate.query=T)%>%
+  filter(!is.na(type.post))%>%
+  left_join(level2.prout.fw.pre.output,by=c('type.pre'='pre_type'))%>%
+  mutate(weight=weight/syn.pre)%>%
+  filter(weight>=0.01)
+
+
+
+#level3.prout.fw
+
+level3.prout.fw.ids <-cf_ids(flywire = flytable.cell_type.coalesced%>%
+                               filter(cell_type %in% (level2.prout.fw.output%>%
+                                                                 pull(type.post)%>%
+                                                                 unique()))%>%
+                               pull(root_id)%>%
+                               unique())
+
+
+level3.prout.fw.pre.output <- cf_partners(level3.prout.fw.ids, 
+                                                      partners = 'out', 
+                                                      threshold = synapse_threshold)%>%
+  mutate(pre_id = as.character(pre_id))%>%
+  left_join(flytable.cell_type.coalesced%>%
+              select(root_id,cell_type,dimorphism)%>%
+              rename('pre_type'='cell_type'),
+            by=c('pre_id'='root_id'))%>%
+  group_by(pre_type)%>%
+  summarize(syn.pre=sum(weight))
+
+
+
+level3.prout.fw.output <- cf_partner_summary(level3.prout.fw.ids, 
+                                               partners = 'out', 
+                                               threshold = synapse_threshold,
+                                               normalise = F,
+                                               aggregate.query=T)%>%
+  filter(!is.na(type.post))%>%
+  left_join(level3.prout.fw.pre.output,by=c('type.pre'='pre_type'))%>%
+  mutate(weight=weight/syn.pre)%>%
+  filter(weight>=0.01)
+
+
+#level 4 
+
+level4.prout.fw.ids <-cf_ids(flywire = flytable.cell_type.coalesced%>%
+                               filter(cell_type %in% (level3.prout.fw.output%>%
+                                                                 pull(type.post)%>%
+                                                                 unique()))%>%
+                               pull(root_id)%>%
+                               unique())
+
+
+level4.prout.fw.pre.output <- cf_partners(level4.prout.fw.ids, 
+                                                      partners = 'out', 
+                                                      threshold = synapse_threshold)%>%
+  mutate(pre_id = as.character(pre_id))%>%
+  left_join(flytable.cell_type.coalesced%>%
+              select(root_id,cell_type,dimorphism)%>%
+              rename('pre_type'='cell_type'),
+            by=c('pre_id'='root_id'))%>%
+  group_by(pre_type)%>%
+  summarize(syn.pre=sum(weight))
+
+
+
+
+level4.prout.fw.output <- cf_partner_summary(level4.prout.fw.ids, 
+                                               partners = 'out', 
+                                               threshold = synapse_threshold,
+                                               normalise = F,
+                                               aggregate.query=T)%>%
+  filter(!is.na(type.post))%>%
+  left_join(level4.prout.fw.pre.output,by=c('type.pre'='pre_type'))%>%
+  mutate(weight=weight/syn.pre)%>%
+  filter(weight>=0.01)
+
+
+#jo-b
+
+job.prout.fw.ids <- cf_ids(flywire="JO-B")
+job.prout.fw.pre.output <- cf_partners(job.prout.fw.ids, 
+                                                      partners = 'out', 
+                                                      threshold = synapse_threshold)%>%
+  mutate(pre_id = as.character(pre_id))%>%
+  left_join(flytable.cell_type.coalesced%>%
+              select(root_id,cell_type,dimorphism)%>%
+              rename('pre_type'='cell_type'),
+            by=c('pre_id'='root_id'))%>%
+  group_by(pre_type)%>%
+  summarize(syn.pre=sum(weight))
+
+
+
+
+job.prout.fw.output <- cf_partner_summary(job.prout.fw.ids, 
+                                               partners = 'out', 
+                                               threshold = synapse_threshold,
+                                               normalise = F,
+                                               aggregate.query=T)%>%
+  filter(!is.na(type.post))%>%
+  left_join(level4.prout.fw.pre.output,by=c('type.pre'='pre_type'))%>%
+  mutate(weight=weight/syn.pre)%>%
+  filter(weight>=0.001)
+
+
+
+
+
+
+all.levels.prout.fw.output <- rbind(level1.prout.fw.output,level2.prout.fw.output,level3.prout.fw.output,level4.prout.fw.output,job.prout.fw.output) %>%distinct()%>%left_join(flytable.cell_type.coalesced%>%
+              select(cell_type,dimorphism,top_nt)%>%
+              rename('pre_type'='cell_type','pre.dimorphism'='dimorphism'),
+              by=c('type.pre'='pre_type'))%>%
+  left_join(flytable.cell_type.coalesced%>%
+              select(cell_type,dimorphism)%>%
+              rename('post_type'='cell_type','post.dimorphism'='dimorphism'),
+              by=c('type.post'='post_type'))%>%
+  distinct()
+
+g.prout.fw <- graph_from_data_frame(all.levels.prout.fw.output%>%
+                             select(type.pre,
+                                    type.post,
+                                    weight),
+                           directed = TRUE)
+
+
+```
+
+Solve to find the best path (maximum product path problem)
+
+```{r}
+library(ggplot2)
+library(reshape2)
+
+# Your existing code
+cell_types <- c('CB1076','CB1078', 'CB3710', 'CB2521','CB1542', 'CB1038', 'CB1427', 'CB2556', 'CB2380') #all
+cell_types <- c('CB1078','CB1542') #selected
+target_cells <- c("vpoEN",'CB1385','DNp37','AVLP299_c')  # List of target cells
+target_cells <- c(target_cells,'pMP2')
+target_cells <- c(target_cells,mba%>% filter(grepl('aSP-k',synonyms))%>%filter(!is.na(type))%>%pull(type)%>%unique())
+target_cells <- c(target_cells,V(g.prout.fw)$name[grepl("pC", V(g.prout.fw)$name)])
+#target_cells <- c(all.levels.prout.fw.output%>%filter((type.post=='vpoEN')&(weight>=0.1))%>%pull(type.pre)%>%unique(),target_cells)
+target_cells <- c(all.levels.prout.fw.output%>%filter(!is.na(post.dimorphism))%>%pull(type.post)%>%unique(),'CB2545')#dimorphic in circuit
+
+# Transform weights using log
+E(g.prout.fw)$log_weight <- -log(E(g.prout.fw)$weight)  # Negate to convert to shortest path problem
+
+# Initialize an empty list to store results
+results <- list()
+
+# Run shortest path calculations
+for (start in cell_types) {
+  for (end in target_cells) {
+    # Find shortest (strongest) path using Dijkstra
+    if ((start %in% V(g.prout.fw)$name) & (end %in% V(g.prout.fw)$name)){
+    path <- shortest_paths(g.prout.fw, from = start, to = end, weights = E(g.prout.fw)$log_weight, output = "both")
+    }
+    
+    # Extract path and compute final strength
+    if ((length(path$vpath[[1]]) > 0)&(start %in% V(g.prout.fw)$name) & (end %in% V(g.prout.fw)$name)) {  # Check if a valid path exists
+      path_nodes <- path$vpath[[1]]  # Path nodes
+      path_edges <- path$epath[[1]]  # Path edges
+      final_strength <- exp(-sum(E(g.prout.fw)[path_edges]$log_weight))  # Convert back
+
+      # Store results
+      results[[paste(start, end, sep = "->")]] <- list(
+        start = start,
+        end = end,
+        path = paste(V(g.prout.fw)[path_nodes]$name, collapse = " -> "),
+        strength = final_strength
+      )
+    } else {
+      # If no path exists, store NA
+            results[[paste(start, end, sep = "->")]] <- list(
+        start = start,
+        end = end,
+        path = 0,
+        strength = 0
+      )
+    }
+  }
+}
+
+# Convert results to a data frame
+results_df <- do.call(rbind, lapply(names(results), function(x) {
+  data.frame(
+    start = results[[x]]$start, 
+    end = results[[x]]$end,
+    path = results[[x]]$path, 
+    strength = results[[x]]$strength, 
+    stringsAsFactors = FALSE
+  )
+}))
+
+
+
+# Create a matrix for heatmap
+heatmap_matrix <- matrix(0, nrow = length(cell_types), ncol = length(target_cells))
+rownames(heatmap_matrix) <- cell_types
+colnames(heatmap_matrix) <- target_cells
+
+# Fill the matrix with path strengths
+for (i in 1:nrow(results_df)) {
+  start <- results_df$start[i]
+  end <- results_df$end[i]
+  strength <- results_df$strength[i]
+  heatmap_matrix[start, end] <- strength
+}
+
+# Convert matrix to a data frame for ggplot2
+heatmap_df <- melt(heatmap_matrix, varnames = c("Start", "End"), value.name = "Strength")
+
+# Plot heatmap using ggplot2
+library(pheatmap)
+heatmap_matrix[is.na(heatmap_matrix)] <- 0
+
+# Plot heatmap using pheatmap with log scale
+my_colors <- colorRampPalette(c("white", "#D11F90"))(100)
+pheatmap(heatmap_matrix, cluster_rows = T, cluster_cols = F, display_numbers = F,fontsize_col = 8,angle_col=90,
+         color = my_colors)
+
+pheatmap(heatmap_matrix, 
+         cluster_rows = F, cluster_cols = F, 
+         display_numbers = F, fontsize_col = 8, angle_col=90,
+         scale = "row",
+         color = my_colors)  # or "column"
+
+
+pheatmap(heatmap_matrix, 
+         cluster_rows = F, cluster_cols = F, 
+         display_numbers = F, fontsize_col = 8, angle_col=90,
+         scale = "column",
+         color = my_colors)  # or "column"
+
+
+```
+Open graph in RCy3
+
+```{r}
+library(RCy3)
+library(dplyr)
+
+
+nodes_to_keep <- c("CB1078", "CB1542", "JO-B","CB2108",'CB1383','CB2545','CB2108',
+                   'CB2364','CB3382','PVLP033','CB2545','AVLP299_c','CB2254','AVLP566',
+                   'vpoEN','pC1d','DNp55','CB1385','DNp36','AVLP567')
+
+
+g.sub.prout.fw <- induced_subgraph(g.prout.fw, vids = V(g.prout.fw)[name %in% nodes_to_keep])
+
+
+node_names <- V(g.sub.prout.fw)$name
+distances_to_JO_B <- shortest.paths(g.sub.prout.fw, to = V(g.sub.prout.fw)[name == "JO-B"], weights = NA)
+V(g.sub.prout.fw)$distance_to_JO_B <- ifelse(node_names == "JO-B", 0, as.integer(distances_to_JO_B))
+
+
+nt_values <- all.levels.prout.fw.output %>%
+  group_by(type.pre) %>%
+  summarize(nt = first(top_nt)) %>%
+  ungroup()
+
+nt_for_vertices <- nt_values$nt[match(V(g.sub.prout.fw)$name, nt_values$type.pre)]
+
+
+V(g.sub.prout.fw)$nt <- nt_for_vertices
+
+
+RCy3::createNetworkFromIgraph(g.sub.prout.fw)
+
+```
+
+Total effectiveness
+
+
+```{r}
+
+
+cell_types <- c('CB1076','CB1078', 'CB3710', 'CB2521','CB1542', 'CB1038', 'CB1427', 'CB2556a', 'CB2380')
+target_cells <- c("vpoEN",'CB1385','AVLP721m','pMP2')  # List of target cells
+
+
+
+# Transform weights using log
+E(g.prout.fw)$log_weight <- -log(E(g.prout.fw)$weight)  # Negate to convert to shortest path problem
+
+# Initialize an empty list to store results
+results <- list()
+
+# Run shortest path calculations
+for (start in cell_types) {
+  for (end in target_cells) {
+    # Find all paths between start and end
+    if ((start %in% V(g.prout.fw)$name) & (end %in% V(g.prout.fw)$name)){
+    all_paths <- all_shortest_paths(g.prout.fw, from = start, to = end, weights = E(g.prout.fw)$log_weight)
+    }
+    # Sum the strength of each path
+    total_strength <- 0
+    if ((length(all_paths$vpath) > 0)&(start %in% V(g.prout.fw)$name) & (end %in% V(g.prout.fw)$name)) {  # Check if there are valid paths
+      for (path in all_paths$vpath) {
+        path_edges <- get.edges(g.prout.fw, path)  # Extract edges for this path
+        total_strength <- total_strength + exp(-sum(E(g.prout.fw)[path_edges]$log_weight))  # Add strength of this path
+      }
+    }
+
+    # Store results
+    results[[paste(start, end, sep = "->")]] <- list(
+      start = start,
+      end = end,
+      path_count = length(all_paths$vpath),  # Number of paths
+      total_strength = total_strength
+    )
+  }
+}
+
+# Convert results to a data frame
+results_df <- do.call(rbind, lapply(names(results), function(x) {
+  data.frame(
+    start = results[[x]]$start, 
+    end = results[[x]]$end,
+    path_count = results[[x]]$path_count,  # Add path count
+    total_strength = results[[x]]$total_strength, 
+    stringsAsFactors = FALSE
+  )
+}))
+
+# View results in a readable format
+
+# Create a matrix for heatmap
+heatmap_matrix <- matrix(NA, nrow = length(cell_types), ncol = length(target_cells))
+rownames(heatmap_matrix) <- cell_types
+colnames(heatmap_matrix) <- target_cells
+
+# Fill the matrix with total strengths
+for (i in 1:nrow(results_df)) {
+  start <- results_df$start[i]
+  end <- results_df$end[i]
+  total_strength <- results_df$total_strength[i]
+  heatmap_matrix[start, end] <- total_strength
+}
+
+# Convert matrix to a data frame for ggplot2
+heatmap_df <- melt(heatmap_matrix, varnames = c("Start", "End"), value.name = "Total Strength")
+
+# Plot heatmap using ggplot2
+library(pheatmap)
+heatmap_matrix[is.na(heatmap_matrix)] <- 0
+# Plot heatmap using pheatmap
+pheatmap(heatmap_matrix, cluster_rows = T, cluster_cols = F, display_numbers = F,fontsize_col = 8,angle_col=90, color = my_colors)
+
+pheatmap(heatmap_matrix, 
+         cluster_rows = F, cluster_cols = F, 
+         display_numbers = F, fontsize_col = 8, angle_col=90,
+         scale = "row",
+          color = my_colors)  # or "column"
+
+
+pheatmap(heatmap_matrix, 
+         cluster_rows = F, cluster_cols = F, 
+         display_numbers = F, fontsize_col = 8, angle_col=90,
+         scale = "column",
+          color = my_colors)  # or "column"
+```
+
+
+
+
+```{r}
+#checking something else
+cf_partner_summary(cf_ids(malecns='pMP2'),partners='in',threshold=5)%>%
+  filter(type.pre %in% (all.levels.prout.fw.output %>%
+                          filter(type.pre == 'AVLP721m')%>%
+                          pull(type.post))) %>%View()
+  
+cf_partner_summary(c(cf_ids(malecns='AVLP711m'),cf_ids(malecns='SIP108m')),partners='out',threshold=5)%>%group_by(type.post)%>%summarize(total=sum(weight))%>%View()
+  
+```
+
+
