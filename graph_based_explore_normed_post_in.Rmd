@@ -63,8 +63,7 @@ level1.poin.mcns.post.input <- cf_partners(cf_ids(malecns = mba.type.coalesced %
 
 level1.poin.mcns.output.normed <- level1.poin.mcns.output%>%
   left_join(level1.poin.mcns.post.input,by=c('type.post'='post_type'))%>%
-  mutate(weight=weight/syn.post)%>%
-  filter(weight>=0.01)
+  mutate(weight=weight/syn.post)
 
 
 #level 2
@@ -98,8 +97,7 @@ level2.poin.mcns.post.input  <- cf_partners(cf_ids(malecns= mba.type.coalesced %
 
 level2.poin.mcns.output.normed<- level2.poin.mcns.output%>%
   left_join(level2.poin.mcns.post.input,by=c('type.post'='post_type'))%>%
-  mutate(weight=weight/syn.post)%>%
-  filter(weight>=0.01)
+  mutate(weight=weight/syn.post)
 
 
 #level3.poin.mcns
@@ -133,8 +131,7 @@ level3.poin.mcns.post.input  <- cf_partners(cf_ids(malecns= mba.type.coalesced %
 
 level3.poin.mcns.output.normed<- level3.poin.mcns.output%>%
   left_join(level3.poin.mcns.post.input,by=c('type.post'='post_type'))%>%
-  mutate(weight=weight/syn.post)%>%
-  filter(weight>=0.01)
+  mutate(weight=weight/syn.post)
 
 
 
