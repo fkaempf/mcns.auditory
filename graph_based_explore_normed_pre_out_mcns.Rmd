@@ -187,6 +187,7 @@ job.prout.mcns.output <- cf_partner_summary(job.prout.mcns.ids,
               mutate(pre_type = gsub("[():]", "", pre_type)),
             by=c('type.pre'='pre_type'))%>%
   mutate(weight=weight/syn.pre)%>%
+
   filter(weight>=0.001)
 
 
@@ -194,14 +195,25 @@ job.prout.mcns.output <- cf_partner_summary(job.prout.mcns.ids,
 
 
 all.levels.prout.mcns.output <- rbind(level1.prout.mcns.output,level2.prout.mcns.output,level3.prout.mcns.output,level4.prout.mcns.output,job.prout.mcns.output) %>%distinct()%>%left_join(mba.type.coalesced%>%
-              select(type,dimorphism,top_nt)%>%
-              rename('pre_type'='type','pre.dimorphism'='dimorphism'),
+              select(type,dimorphism,top_nt,fru_dsx)%>%
+              rename('pre_type'='type','pre.dimorphism'='dimorphism','pre.fru_dsx'='fru_dsx'),
               by=c('type.pre'='pre_type'))%>%
   left_join(mba.type.coalesced%>%
               select(type,dimorphism)%>%
               rename('post_type'='type','post.dimorphism'='dimorphism'),
               by=c('type.post'='post_type'))%>%
   distinct()
+
+#all.levels.prout.mcns.output$type.pre.mcns <- all.levels.prout.mcns.output$type.pre
+#all.levels.prout.mcns.output$type.post.mcns <- all.levels.prout.mcns.output$type.post
+#mba_synonyms_pp <- mba_synonyms%>%
+#  filter(!is.na(flywire_type)) %>%
+#  filter(!is.na(type)) %>%
+#  select(type,flywire_type)%>%
+#  distinct(type, .keep_all = TRUE)
+#flywire_lookup <- setNames(mba_synonyms_pp$flywire_type, mba_synonyms_pp$type)
+#all.levels.prout.mcns.output$type.pre <- flywire_lookup[as.character(all.levels.prout.mcns.output$type.pre)]
+#all.levels.prout.mcns.output$type.post <- flywire_lookup[as.character(all.levels.prout.mcns.output$type.post)] 
 
 
 g.prout.mcns <- graph_from_data_frame(all.levels.prout.mcns.output%>%
@@ -222,6 +234,7 @@ library(reshape2)
 # Your existing code
 cell_types <- c('CB1076','CB1078', 'CB3710', 'CB2521','CB1542', 'CB1038', 'CB1427', 'CB2556a', 'CB2380') #all
 #cell_types <- c('CB1078','CB1542') #selected
+cell_types <- c('JO-B') #only JO-B
 target_cells <- c("vpoEN",'CB1385')  # List of target cells
 target_cells <- c(target_cells,'pMP2')
 target_cells <- c(target_cells,mba%>% filter(grepl('aSP-k',synonyms))%>%filter(!is.na(type))%>%pull(type)%>%unique())
@@ -233,6 +246,7 @@ E(g.prout.mcns)$log_weight <- -log(E(g.prout.mcns)$weight)  # Negate to convert 
 
 # Initialize an empty list to store results
 results <- list()
+all_important_nodes <- character()
 
 # Run shortest path calculations
 for (start in cell_types) {
@@ -255,14 +269,16 @@ for (start in cell_types) {
         path = paste(V(g.prout.mcns)[path_nodes]$name, collapse = " -> "),
         strength = final_strength
       )
+      all_important_nodes = c(all_important_nodes,V(g.prout.mcns)[path_nodes]$name)
     } else {
       # If no path exists, store NA
             results[[paste(start, end, sep = "->")]] <- list(
-        start = start,
-        end = end,
-        path = 0,
-        strength = 0
-      )
+              start = start,
+              end = end,
+              path = 0,
+              strength = 0)
+            
+            
     }
   }
 }
@@ -331,6 +347,7 @@ library(dplyr)
 nodes_to_keep <- c("JO-B","JO-B",'CB1078','CB1542','CB2108','CB1383','CB1066,CB3649
 ','CB2364','CB3382','PVLP033','CB3162','CB3382','vpoEN',V(g.prout.mcns)$name[grepl("P1_", V(g.prout.mcns)$name)],
 'AVLP721m','AVLP299_c','DNp55','CB1385','AVLP711m','SIP108m','SIP120m','SIP116m','SIP114m','PVLP211m','pMP2','AVLP744m')
+nodes_to_keep <- unique(all_important_nodes)
 
 
 g.sub.prout.mcns <- induced_subgraph(g.prout.mcns, vids = V(g.prout.mcns)[name %in% nodes_to_keep])
@@ -340,6 +357,12 @@ node_names <- V(g.sub.prout.mcns)$name
 distances_to_JO_B <- shortest.paths(g.sub.prout.mcns, to = V(g.sub.prout.mcns)[name == "JO-B"], weights = NA)
 V(g.sub.prout.mcns)$distance_to_JO_B <- ifelse(node_names == "JO-B", 0, as.integer(distances_to_JO_B))
 
+fru_dsx_values <- all.levels.prout.mcns.output %>%
+    group_by(type.pre) %>%
+  mutate(pre.fru_dsx = !is.na(pre.fru_dsx))%>%
+  summarize(fru_dsx = first(pre.fru_dsx)) %>%
+  ungroup()
+
 
 nt_values <- all.levels.prout.mcns.output %>%
   group_by(type.pre) %>%
@@ -347,7 +370,9 @@ nt_values <- all.levels.prout.mcns.output %>%
   ungroup()
 
 nt_for_vertices <- nt_values$nt[match(V(g.sub.prout.mcns)$name, nt_values$type.pre)]
+fru_dsx_for_vertices <- fru_dsx_values$fru_dsx[match(V(g.sub.prout.mcns)$name, nt_values$type.pre)]
 V(g.sub.prout.mcns)$nt <- nt_for_vertices
+V(g.sub.prout.mcns)$fru_dsx <- fru_dsx_for_vertices
 
 el<- as_edgelist(g.sub.prout.mcns)
 is_p1p1 <- grepl("^P1_", el[, 1]) & grepl("^P1_", el[, 2])
@@ -371,8 +396,10 @@ rename_dict <- list(
   
 )
 
+
 # Apply the dictionary to rename the vertices in the graph
 V(g.sub.prout.mcns)$name <- sapply(V(g.sub.prout.mcns)$name, function(x) ifelse(x %in% names(rename_dict), rename_dict[[x]], x))
+
 
 
 
