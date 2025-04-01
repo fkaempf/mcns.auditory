@@ -27,7 +27,10 @@ mba.type.coalesced <-  mba %>%
                          manc_type),
          top_nt=celltype_predicted_nt)
 flytable<-flytable_query("select * from info")
-mba_synonyms <- mba%>%select(bodyid,type,flywire_type,synonyms)
+mba_synonyms <- mba%>%
+  select(bodyid,type,flywire_type,synonyms)%>%
+  filter(!is.na(flywire_type))
+mba_synonyms_unique <- mba_synonyms%>%distinct(type,.keep_all=T)
 ```
 
 Create a graph of 4 layers and then find the strongest path from sink to sink
@@ -204,6 +207,16 @@ all.levels.prout.mcns.output <- rbind(level1.prout.mcns.output,level2.prout.mcns
               by=c('type.post'='post_type'))%>%
   distinct()
 
+all.levels.prout.mcns.output<-all.levels.prout.mcns.output%>%
+  left_join(mba_synonyms_unique, by = c("type.pre" = "type"))%>%
+  rename('flywire_type.pre' = 'flywire_type','synonym.pre'='synonyms')%>%
+  left_join(mba_synonyms_unique, by = c("type.post" = "type"))%>%
+  rename('flywire_type.post' = 'flywire_type','synonym.post'='synonyms')
+
+all.levels.prout.mcns.output.fw_name <- all.levels.prout.mcns.output%>%
+  mutate(type.pre = coalesce(flywire_type.pre, type.pre))%>%
+  mutate(type.post = coalesce(flywire_type.post, type.post))
+
 #all.levels.prout.mcns.output$type.pre.mcns <- all.levels.prout.mcns.output$type.pre
 #all.levels.prout.mcns.output$type.post.mcns <- all.levels.prout.mcns.output$type.post
 #mba_synonyms_pp <- mba_synonyms%>%
@@ -221,6 +234,12 @@ g.prout.mcns <- graph_from_data_frame(all.levels.prout.mcns.output%>%
                                     type.post,
                                     weight),
                            directed = TRUE)
+g.prout.mcns.fw_name <- graph_from_data_frame(all.levels.prout.mcns.output.fw_name%>%
+                             select(type.pre,
+                                    type.post,
+                                    weight),
+                           directed = TRUE)
+g.prout.mcns<-g.prout.mcns.fw_name
 
 
 ```
@@ -349,8 +368,18 @@ nodes_to_keep <- c("JO-B","JO-B",'CB1078','CB1542','CB2108','CB1383','CB1066,CB3
 'AVLP721m','AVLP299_c','DNp55','CB1385','AVLP711m','SIP108m','SIP120m','SIP116m','SIP114m','PVLP211m','pMP2','AVLP744m')
 nodes_to_keep <- unique(all_important_nodes)
 
-
+#cleaning up graph and subsampling
 g.sub.prout.mcns <- induced_subgraph(g.prout.mcns, vids = V(g.prout.mcns)[name %in% nodes_to_keep])
+g.sub.prout.mcns <- g_avg <- simplify(
+  g.sub.prout.mcns,
+  remove.multiple = TRUE,
+  remove.loops = FALSE,
+  edge.attr.comb = list(weight = "mean", "ignore")  # average weight
+)
+nodes_to_filter <- V(g.sub.prout.mcns)[grepl("^P1_", name)]
+edges_to_delete <- incident(g.sub.prout.mcns, nodes_to_filter, mode = "out")
+g.sub.prout.mcns <- delete_edges(g.sub.prout.mcns, edges_to_delete)
+
 
 
 node_names <- V(g.sub.prout.mcns)$name
