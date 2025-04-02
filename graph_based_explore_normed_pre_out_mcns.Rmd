@@ -66,8 +66,8 @@ level1.prout.mcns.output <- cf_partner_summary(level1.prout.mcns.ids,
                                                aggregate.query=T)%>%
   filter(!is.na(type.post))%>%
   left_join(level1.prout.mcns.pre.output,by=c('type.pre'='pre_type'))%>%
-  mutate(weight=weight/syn.pre)%>%
-  filter(weight>=0.02)
+  mutate(pre_normed_weight=weight/syn.pre)%>%
+  filter(pre_normed_weight>=0.02)
 
 
 
@@ -98,8 +98,8 @@ level2.prout.mcns.output <- cf_partner_summary(level2.prout.mcns.ids,
                                                aggregate.query=T)%>%
   filter(!is.na(type.post))%>%
   left_join(level2.prout.mcns.pre.output,by=c('type.pre'='pre_type'))%>%
-  mutate(weight=weight/syn.pre)%>%
-  filter(weight>=0.02)
+  mutate(pre_normed_weight=weight/syn.pre)%>%
+  filter(pre_normed_weight>=0.02)
 
 
 
@@ -130,8 +130,8 @@ level3.prout.mcns.output <- cf_partner_summary(level3.prout.mcns.ids,
                                                aggregate.query=T)%>%
   filter(!is.na(type.post))%>%
   left_join(level3.prout.mcns.pre.output,by=c('type.pre'='pre_type'))%>%
-  mutate(weight=weight/syn.pre)%>%
-  filter(weight>=0.02)
+  mutate(pre_normed_weight=weight/syn.pre)%>%
+  filter(pre_normed_weight>=0.02)
 
 
 #level 4 
@@ -161,8 +161,8 @@ level4.prout.mcns.output <- cf_partner_summary(level4.prout.mcns.ids,
                                                aggregate.query=T)%>%
   filter(!is.na(type.post))%>%
   left_join(level4.prout.mcns.pre.output,by=c('type.pre'='pre_type'))%>%
-  mutate(weight=weight/syn.pre)%>%
-  filter(weight>=0.02)
+  mutate(pre_normed_weight=weight/syn.pre)%>%
+  filter(pre_normed_weight>=0.02)
 
 #jo-b
 
@@ -189,22 +189,43 @@ job.prout.mcns.output <- cf_partner_summary(job.prout.mcns.ids,
   left_join(job.prout.mcns.pre.output%>% 
               mutate(pre_type = gsub("[():]", "", pre_type)),
             by=c('type.pre'='pre_type'))%>%
-  mutate(weight=weight/syn.pre)%>%
+  mutate(pre_normed_weight=weight/syn.pre)%>%
 
-  filter(weight>=0.001)
-
-
+  filter(pre_normed_weight>=0.001)
 
 
 
-all.levels.prout.mcns.output <- rbind(level1.prout.mcns.output,level2.prout.mcns.output,level3.prout.mcns.output,level4.prout.mcns.output,job.prout.mcns.output) %>%distinct()%>%left_join(mba.type.coalesced%>%
-              select(type,dimorphism,top_nt,fru_dsx)%>%
-              rename('pre_type'='type','pre.dimorphism'='dimorphism','pre.fru_dsx'='fru_dsx'),
-              by=c('type.pre'='pre_type'))%>%
+
+
+all.levels.prout.mcns.output <- rbind(level1.prout.mcns.output,level2.prout.mcns.output,level3.prout.mcns.output,level4.prout.mcns.output,job.prout.mcns.output)%>%
+  distinct()%>%
   left_join(mba.type.coalesced%>%
-              select(type,dimorphism)%>%
-              rename('post_type'='type','post.dimorphism'='dimorphism'),
-              by=c('type.post'='post_type'))%>%
+              select(type, dimorphism, top_nt, fru_dsx)%>%
+              rename(pre_type = type,
+                     pre.dimorphism = dimorphism,
+                     pre.fru_dsx = fru_dsx
+                     )%>%
+              group_by(pre_type, 
+                       pre.dimorphism, 
+                       top_nt)%>%
+              summarise(
+                pre.fru_dsx = coalesce(pre.fru_dsx[!is.na(pre.fru_dsx)][1], 
+                                       NA_character_),
+                .groups = "drop"
+                ),
+            by=c('type.pre'='pre_type'))%>%
+  left_join(mba.type.coalesced%>%
+              select(type, dimorphism)%>%
+              rename(post_type = type,
+                     post.dimorphism = dimorphism,
+                     )%>%
+              group_by(post_type)%>%
+              summarise(
+                post.dimorphism = coalesce(post.dimorphism[!is.na(post.dimorphism)][1], 
+                                       NA_character_),
+                .groups = "drop"
+                ),
+            by=c('type.post'='post_type'))%>%
   distinct()
 
 all.levels.prout.mcns.output<-all.levels.prout.mcns.output%>%
@@ -232,12 +253,12 @@ all.levels.prout.mcns.output.fw_name <- all.levels.prout.mcns.output%>%
 g.prout.mcns <- graph_from_data_frame(all.levels.prout.mcns.output%>%
                              select(type.pre,
                                     type.post,
-                                    weight),
+                                    pre_normed_weight),
                            directed = TRUE)
 g.prout.mcns.fw_name <- graph_from_data_frame(all.levels.prout.mcns.output.fw_name%>%
                              select(type.pre,
                                     type.post,
-                                    weight),
+                                    pre_normed_weight),
                            directed = TRUE)
 g.prout.mcns<-g.prout.mcns.fw_name
 
@@ -261,7 +282,7 @@ target_cells <- c(target_cells,V(g.prout.mcns)$name[grepl("P1_", V(g.prout.mcns)
 #target_cells <- c(all.levels.prout.mcns.output%>%filter((type.post=='vpoEN')&(weight>=0.1))%>%pull(type.pre)%>%unique(),target_cells)
 
 # Transform weights using log
-E(g.prout.mcns)$log_weight <- -log(E(g.prout.mcns)$weight)  # Negate to convert to shortest path problem
+E(g.prout.mcns)$log_weight <- -log(E(g.prout.mcns)$pre_normed_weight)  # Negate to convert to shortest path problem
 
 # Initialize an empty list to store results
 results <- list()
@@ -370,12 +391,12 @@ nodes_to_keep <- unique(all_important_nodes)
 
 #cleaning up graph and subsampling
 g.sub.prout.mcns <- induced_subgraph(g.prout.mcns, vids = V(g.prout.mcns)[name %in% nodes_to_keep])
-g.sub.prout.mcns <- g_avg <- simplify(
-  g.sub.prout.mcns,
-  remove.multiple = TRUE,
-  remove.loops = FALSE,
-  edge.attr.comb = list(weight = "mean", "ignore")  # average weight
-)
+#g.sub.prout.mcns <- g_avg <- simplify(
+#  g.sub.prout.mcns,
+#  remove.multiple = TRUE,
+#  remove.loops = FALSE,
+#  edge.attr.comb = list(pre_normed_weight = "mean", "ignore")  # average weight
+#)
 nodes_to_filter <- V(g.sub.prout.mcns)[grepl("^P1_", name)]
 edges_to_delete <- incident(g.sub.prout.mcns, nodes_to_filter, mode = "out")
 g.sub.prout.mcns <- delete_edges(g.sub.prout.mcns, edges_to_delete)
@@ -434,115 +455,5 @@ V(g.sub.prout.mcns)$name <- sapply(V(g.sub.prout.mcns)$name, function(x) ifelse(
 
 RCy3::createNetworkFromIgraph(g.sub.prout.mcns)
 
+
 ```
-
-
-Total effectiveness
-
-
-```{r}
-
-
-cell_types <- c('CB1076','CB1078', 'CB3710', 'CB2521','CB1542', 'CB1038', 'CB1427', 'CB2556a', 'CB2380')
-target_cells <- c("vpoEN",'CB1385')  # List of target cells
-target_cells <- c('pMP2',target_cells)
-target_cells <- c(target_cells,mba%>% filter(grepl('aSP-k',synonyms))%>%filter(!is.na(type))%>%pull(type)%>%unique())
-target_cells <- c(target_cells,V(g.prout.mcns)$name[grepl("P1_", V(g.prout.mcns)$name)])
-target_cells <- c(all.levels.prout.mcns.output%>%filter((type.post=='vpoEN')&(weight>=0.1))%>%pull(type.pre)%>%unique(),target_cells)
-
-# Transform weights using log
-E(g.prout.mcns)$log_weight <- -log(E(g.prout.mcns)$weight)  # Negate to convert to shortest path problem
-
-# Initialize an empty list to store results
-results <- list()
-
-# Run shortest path calculations
-for (start in cell_types) {
-  for (end in target_cells) {
-    # Find all paths between start and end
-    if ((start %in% V(g.prout.mcns)$name) & (end %in% V(g.prout.mcns)$name)){
-    all_paths <- all_shortest_paths(g.prout.mcns, from = start, to = end, weights = E(g.prout.mcns)$log_weight)
-    }
-    # Sum the strength of each path
-    total_strength <- 0
-    if ((length(all_paths$vpath) > 0)&(start %in% V(g.prout.mcns)$name) & (end %in% V(g.prout.mcns)$name)) {  # Check if there are valid paths
-      for (path in all_paths$vpath) {
-        path_edges <- get.edges(g.prout.mcns, path)  # Extract edges for this path
-        total_strength <- total_strength + exp(-sum(E(g.prout.mcns)[path_edges]$log_weight))  # Add strength of this path
-      }
-    }
-
-    # Store results
-    results[[paste(start, end, sep = "->")]] <- list(
-      start = start,
-      end = end,
-      path_count = length(all_paths$vpath),  # Number of paths
-      total_strength = total_strength
-    )
-  }
-}
-
-# Convert results to a data frame
-results_df <- do.call(rbind, lapply(names(results), function(x) {
-  data.frame(
-    start = results[[x]]$start, 
-    end = results[[x]]$end,
-    path_count = results[[x]]$path_count,  # Add path count
-    total_strength = results[[x]]$total_strength, 
-    stringsAsFactors = FALSE
-  )
-}))
-
-# View results in a readable format
-
-# Create a matrix for heatmap
-heatmap_matrix <- matrix(NA, nrow = length(cell_types), ncol = length(target_cells))
-rownames(heatmap_matrix) <- cell_types
-colnames(heatmap_matrix) <- target_cells
-
-# Fill the matrix with total strengths
-for (i in 1:nrow(results_df)) {
-  start <- results_df$start[i]
-  end <- results_df$end[i]
-  total_strength <- results_df$total_strength[i]
-  heatmap_matrix[start, end] <- total_strength
-}
-
-# Convert matrix to a data frame for ggplot2
-heatmap_df <- melt(heatmap_matrix, varnames = c("Start", "End"), value.name = "Total Strength")
-
-# Plot heatmap using ggplot2
-library(pheatmap)
-heatmap_matrix[is.na(heatmap_matrix)] <- 0
-# Plot heatmap using pheatmap
-pheatmap(heatmap_matrix, cluster_rows = T, cluster_cols = F, display_numbers = F,fontsize_col = 8,angle_col=90, color = my_colors)
-
-pheatmap(heatmap_matrix, 
-         cluster_rows = F, cluster_cols = F, 
-         display_numbers = F, fontsize_col = 8, angle_col=90,
-         scale = "row",
-          color = my_colors)  # or "column"
-
-
-pheatmap(heatmap_matrix, 
-         cluster_rows = F, cluster_cols = F, 
-         display_numbers = F, fontsize_col = 8, angle_col=90,
-         scale = "column",
-          color = my_colors)  # or "column"
-```
-
-
-
-
-```{r}
-#checking something else
-cf_partner_summary(cf_ids(malecns='pMP2'),partners='in',threshold=5)%>%
-  filter(type.pre %in% (all.levels.prout.mcns.output %>%
-                          filter(type.pre == 'AVLP721m')%>%
-                          pull(type.post))) %>%View()
-  
-cf_partner_summary(c(cf_ids(malecns='AVLP711m'),cf_ids(malecns='SIP108m')),partners='out',threshold=5)%>%group_by(type.post)%>%summarize(total=sum(weight))%>%View()
-  
-```
-
-
