@@ -26,7 +26,7 @@ mba.type.coalesced <-  mba %>%
                          hemibrain_type, 
                          manc_type),
          top_nt=celltype_predicted_nt)
-flytable<-flytable_query("select * from info")
+flytable<-flytable_query("select * from info",python=T)
 mba_synonyms <- mba%>%
   select(bodyid,type,flywire_type,synonyms)%>%
   filter(!is.na(flywire_type))
@@ -193,10 +193,11 @@ job.prout.mcns.output <- cf_partner_summary(job.prout.mcns.ids,
 
   filter(pre_normed_weight>=0.001)
 
+```
 
 
 
-
+```{r}
 all.levels.prout.mcns.output <- rbind(level1.prout.mcns.output,level2.prout.mcns.output,level3.prout.mcns.output,level4.prout.mcns.output,job.prout.mcns.output)%>%
   distinct()%>%
   left_join(mba.type.coalesced%>%
@@ -238,16 +239,29 @@ all.levels.prout.mcns.output.fw_name <- all.levels.prout.mcns.output%>%
   mutate(type.pre = coalesce(flywire_type.pre, type.pre))%>%
   mutate(type.post = coalesce(flywire_type.post, type.post))
 
-#all.levels.prout.mcns.output$type.pre.mcns <- all.levels.prout.mcns.output$type.pre
-#all.levels.prout.mcns.output$type.post.mcns <- all.levels.prout.mcns.output$type.post
-#mba_synonyms_pp <- mba_synonyms%>%
-#  filter(!is.na(flywire_type)) %>%
-#  filter(!is.na(type)) %>%
-#  select(type,flywire_type)%>%
-#  distinct(type, .keep_all = TRUE)
-#flywire_lookup <- setNames(mba_synonyms_pp$flywire_type, mba_synonyms_pp$type)
-#all.levels.prout.mcns.output$type.pre <- flywire_lookup[as.character(all.levels.prout.mcns.output$type.pre)]
-#all.levels.prout.mcns.output$type.post <- flywire_lookup[as.character(all.levels.prout.mcns.output$type.post)] 
+mode_val <- function(x) {
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))]
+}
+
+temp<-all.levels.prout.mcns.output.fw_name%>%
+    group_by(type.pre, type.post) %>%
+    summarise(weight_sum = sum(weight), top_nt=mode_val(top_nt),pre.fru_dsx=mode_val(pre.fru_dsx))%>%
+  ungroup()%>%
+  distinct()
+print(dim(temp))
+
+
+temp.pre_synapses <- all.levels.prout.mcns.output.fw_name%>%
+  select(type.pre,type.post,query,syn.pre)%>%
+  group_by(type.pre, type.post) %>%
+  summarise(syn.pre = sum(syn.pre))%>%
+  distinct()
+print(dim(temp.pre_synapses))
+  
+all.levels.prout.mcns.output.fw_name <- left_join(temp, temp.pre_synapses, by = c('type.pre', 'type.post'))%>%
+  mutate(pre_normed_weight=weight_sum/syn.pre)
+  
 
 
 g.prout.mcns <- graph_from_data_frame(all.levels.prout.mcns.output%>%
@@ -425,7 +439,7 @@ V(g.sub.prout.mcns)$nt <- nt_for_vertices
 V(g.sub.prout.mcns)$fru_dsx <- fru_dsx_for_vertices
 
 el<- as_edgelist(g.sub.prout.mcns)
-is_p1p1 <- grepl("^P1_", el[, 1]) & grepl("^P1_", el[, 2])
+is_p1p1 <- grepl("^P1_", el[, 1])# & grepl("^P1_", el[, 2])
 E(g.sub.prout.mcns)$is_p1_p1 <- is_p1p1
 
 rename_dict <- list(
