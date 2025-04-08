@@ -1,0 +1,245 @@
+---
+title: "mcns_effective_connectivity"
+output: html_document
+---
+
+Imports
+```{r}
+library(malecns)
+library(coconatfly)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(plotly)
+library(stringr)
+library(igraph)
+library(fafbseg)
+library(tidygraph)
+library(ggraph)
+```
+
+Load metadata all cells
+```{r}
+synapse_threshold=5
+mba<-mcns_body_annotations()
+mba.type.coalesced <-  mba %>%
+  mutate(type = coalesce(type, 
+                         flywire_type, 
+                         hemibrain_type, 
+                         manc_type),
+         top_nt=celltype_predicted_nt)
+#flytable<-flytable_query("select * from info",limit=1000) #this throws an error right now?
+mba_synonyms <- mba%>%
+  select(bodyid,type,flywire_type,synonyms)%>%
+  filter(!is.na(flywire_type))
+mba_synonyms_unique <- mba_synonyms%>%distinct(type,.keep_all=T)
+```
+
+
+Starter type/s or cell/s
+```{r}
+starter = c('JO-B','(JO-B)')
+drop_hemispheres <- F
+```
+
+
+
+
+Raw example of how the function works and test edge cases
+
+```{r}
+
+starter = c('JO-B','(JO-B)')
+drop_hemispheres <- F
+job.mcns.id <- c()
+
+result_list <- lapply(starter, function(x) {
+  # Get MCNS IDs for the current starter (assumes cf_ids is defined)
+  job_mcns_id <- cf_ids(malecns = x)
+  # Retrieve partner connections for the obtained IDs
+  cf_partners(job_mcns_id, partners = "out", threshold = synapse_threshold)
+})
+
+# Combine the individual data frames row-wise into a final data frame.
+final_df <- bind_rows(result_list)
+
+job.prout.mcns.output.0 <- final_df%>%
+  left_join(mba.type.coalesced%>%
+              select(bodyid,type,soma_side)%>%
+              rename('pre_type'='type','soma_side_pre'='soma_side'),
+            by='bodyid')%>%
+  distinct()
+
+print(length(job.prout.mcns.output.0%>%pull(post_id)%>%unique()))
+
+if (drop_hemispheres){
+job.prout.mcns.output.1 <- job.prout.mcns.output.0 %>%
+  group_by(pre_type, type) %>%
+  summarise(
+    pre_id_list = I(list(unique(pre_id))),
+    post_id_list = I(list(unique(post_id))),
+    weight = sum(weight),
+    dataset = first(dataset),
+    .groups = 'drop'  # optional: ungroups the result
+  )%>%
+  rename(post_type=type)
+} else{
+  job.prout.mcns.output.1 <- job.prout.mcns.output.0 %>%
+  group_by(pre_type, type,soma_side_pre,somaSide) %>%
+  summarise(
+    pre_id_list = I(list(unique(pre_id))),
+    post_id_list = I(list(unique(post_id))),
+    weight = sum(weight),
+    dataset = first(dataset),
+    .groups = 'drop'  # optional: ungroups the result
+  )%>%
+  rename(post_type=type,soma_side_post=somaSide)
+}
+
+
+query_total_synapses<-function(query_list,query_df){
+  sum_synapses <-query_df%>%
+    filter(bodyid %in% query_list)%>%
+    pull(weight)%>%
+    sum()
+  return(sum_synapses)
+}
+
+#norm by the number of pre_synapses
+job.prout.mcns.output.2 <- job.prout.mcns.output.1%>%
+  rowwise() %>%
+  mutate(total_synapses_out = query_total_synapses(pre_id_list,job.prout.mcns.output.0))%>%
+  ungroup() %>%
+  mutate(pre_normed_weight=weight/total_synapses_out)%>%
+  filter(pre_normed_weight>=0.02)
+
+unique.post.id <- job.prout.mcns.output.2%>%pull(post_id_list)%>%unlist()%>%unique()
+print(length(unique.post.id))
+```
+Function
+```{r}
+generate_mcns_output <- function(starter = c("JO-B", "(JO-B)"),
+                                 drop_hemispheres = FALSE,
+                                 synapse_threshold = 5,
+                                 norm_cutoff = 0.02) {
+  
+  #' Generate Underlying Connectivity Data for Effective Connectivity Explorations
+  #'
+  #' This function generates a summarized version of MCNS output data from partner connections,
+  #' intended to provide the underlying connectivity data for effective connectivity explorations.
+  #' It collects MCNS IDs based on the provided starter values, retrieves partner connections using a
+  #' synapse threshold, and joins with additional type information. The data is then grouped and summarized,
+  #' and the pre-synaptic weights are normalized. Only groups with a normalized weight above a given cutoff
+  #' are retained.
+  #'
+  #' @param starter A character vector of starter IDs. Default is `c("JO-B", "(JO-B)")`.
+  #' @param drop_hemispheres Logical indicating whether to group without hemisphere information.
+  #'   If TRUE, the groups will be defined only by `pre_type` and `type`; if FALSE, additional grouping by
+  #'   `soma_side_pre` and `somaSide` is performed. Default is `FALSE`.
+  #' @param synapse_threshold Numeric synapse threshold for selecting partner connections.
+  #'   Default is `5`.
+  #' @param norm_cutoff Numeric value specifying the cutoff for the normalized pre-synaptic weight.
+  #'   Groups with `pre_normed_weight` below this cutoff will be filtered out. Default is `0.02`.
+  #'
+  #' @return A list with two elements:
+  #' \describe{
+  #'   \item{output}{A data.frame/tibble with the summarized and filtered MCNS output.}
+  #'   \item{unique_post_ids}{A numeric vector with the unique post IDs from the final output.}
+  #' }
+  #'
+  #' @examples
+  #' \dontrun{
+  #'   result <- generate_mcns_output()
+  #'   head(result$output)
+  #'   print(result$unique_post_ids)
+  #' }
+  #'
+  ##############################################################################
+  
+  # Helper function to sum synapses for a given query_list.
+  query_total_synapses <- function(query_list, query_df) {
+    sum_synapses <- query_df %>%
+      filter(bodyid %in% query_list) %>%
+      pull(weight) %>%
+      sum()
+    return(sum_synapses)
+  }
+  
+  # For each starter value, retrieve MCNS IDs and then get the partner connections.
+  result_list <- lapply(starter, function(x) {
+    # Obtain MCNS IDs for the current starter (cf_ids is assumed to be defined)
+    job_mcns_id <- cf_ids(malecns = x)
+    # Retrieve partner connections for the obtained IDs
+    cf_partners(job_mcns_id, partners = "out", threshold = synapse_threshold)
+  })
+  
+  # Combine the individual partner data frames row-wise.
+  final_df <- dplyr::bind_rows(result_list)
+  
+  # Join with additional type information and remove duplicates.
+  job.prout.mcns.output.0 <- final_df %>%
+    left_join(mba.type.coalesced %>%
+                dplyr::select(bodyid, type, soma_side) %>%
+                dplyr::rename(pre_type = type, soma_side_pre = soma_side),
+              by = "bodyid") %>%
+    dplyr::distinct()
+  
+  # Print the number of unique post_id values before grouping/filtering.
+  print(length(job.prout.mcns.output.0 %>% pull(post_id) %>% unique()))
+  
+  # Group and summarize the data.
+  if (drop_hemispheres) {
+    job.prout.mcns.output.1 <- job.prout.mcns.output.0 %>%
+      group_by(pre_type, type) %>%
+      summarise(
+        pre_id_list = I(list(unique(pre_id))),
+        post_id_list = I(list(unique(post_id))),
+        weight = sum(weight),
+        dataset = first(dataset),
+        .groups = "drop"
+      ) %>%
+      rename(post_type = type)
+  } else {
+    job.prout.mcns.output.1 <- job.prout.mcns.output.0 %>%
+      group_by(pre_type, type, soma_side_pre, somaSide) %>%
+      summarise(
+        pre_id_list = I(list(unique(pre_id))),
+        post_id_list = I(list(unique(post_id))),
+        weight = sum(weight),
+        dataset = first(dataset),
+        .groups = "drop"
+      ) %>%
+      rename(post_type = type,
+             soma_side_post = somaSide)
+  }
+  
+  # Normalize by the total number of pre-synapses.
+  job.prout.mcns.output.2 <- job.prout.mcns.output.1 %>%
+    rowwise() %>%
+    mutate(total_synapses_out = query_total_synapses(pre_id_list, job.prout.mcns.output.0)) %>%
+    ungroup() %>%
+    mutate(pre_normed_weight = weight / total_synapses_out) %>%
+    filter(pre_normed_weight >= norm_cutoff)
+  
+  # Unpack post_id_list and get the unique post ids.
+  unique_post_ids <- job.prout.mcns.output.2 %>%
+    pull(post_id_list) %>%
+    unlist() %>%
+    unique()
+  
+  # Return the filtered output and unique post IDs in a list.
+  return(list(output = job.prout.mcns.output.2,
+              unique_post_ids = unique_post_ids))
+}
+
+result <- generate_mcns_output(starter = c("JO-B", "(JO-B)"),
+                               drop_hemispheres = FALSE,
+                               synapse_threshold = 5,
+                               norm_cutoff = 0.02)
+```
+
+
+
+
+
+
