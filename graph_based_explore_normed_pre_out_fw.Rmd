@@ -27,7 +27,7 @@ mba.type.coalesced <-  mba %>%
                          manc_type))
 
 
-flytable<-flytable_query("select * from info")
+flytable<-flytable_query("select * from info",python=T)
 flytable.cell_type.coalesced <-  flytable %>%
   mutate(cell_type = coalesce(cell_type, 
                          malecns_type, 
