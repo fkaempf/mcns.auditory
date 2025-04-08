@@ -1,0 +1,50 @@
+---
+title: "extract_obj"
+output: html_document
+---
+
+```{r}
+library(coconatfly)
+library(malecns)
+library(dplyr)
+```
+
+
+
+```{r}
+PPN1_bella <- "11431"
+vvv=read_mcns_meshes(cf_meta(cf_ids(malecns=PPN1_bella)) %>% pull(id), units='nm')
+write.neurons(vvv, format = 'obj',dir='~')
+```
+
+
+```{r}
+vAB3_bella <- c(cf_ids(malecns='11998'),cf_ids(malecns='14320'))
+vvv=read_mcns_meshes(cf_meta(cf_ids(malecns=vAB3_bella)) %>% pull(id), units='nm')
+write.neurons(vvv, format = 'obj',dir='~')
+```
+
+
+
+
+
+
+
+
+```{r}
+library(dplyr)
+library(stringr)
+vAB3 <- cf_partner_summary(cf_ids(malecns='AN09B017'),partners = 'o',aggregate.query = T)
+PPN1 <- cf_partner_summary(cf_ids(malecns='AN05B102'),partners = 'o',aggregate.query = T)
+
+
+vAB3.P1 <- vAB3 %>%  filter(str_detect(type.post, "P1_"))
+vAB3.mAL <- vAB3 %>%  filter(str_detect(type.post, "mAL_"))
+PPN1.P1 <- PPN1 %>%  filter(str_detect(type.post, "P1_"))
+PPN1.mAL <- PPN1 %>%  filter(str_detect(type.post, "mAL_"))
+
+```
+
+
+
+
