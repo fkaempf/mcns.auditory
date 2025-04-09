@@ -51,19 +51,10 @@ Raw example of how the function works and test edge cases
 
 starter = c('JO-B','(JO-B)')
 drop_hemispheres <- F
-job.mcns.id <- c()
 
-result_list <- lapply(starter, function(x) {
-  # Get MCNS IDs for the current starter (assumes cf_ids is defined)
-  job_mcns_id <- cf_ids(malecns = x)
-  # Retrieve partner connections for the obtained IDs
-  cf_partners(job_mcns_id, partners = "out", threshold = synapse_threshold)
-})
+job_mcns_id <- do.call(c, lapply(starter, function(x) cf_ids(malecns = x)))
 
-# Combine the individual data frames row-wise into a final data frame.
-final_df <- bind_rows(result_list)
-
-job.prout.mcns.output.0 <- final_df%>%
+job.prout.mcns.output.0 <-   cf_partners(job_mcns_id, partners = "out", threshold = synapse_threshold)%>%
   left_join(mba.type.coalesced%>%
               select(bodyid,type,soma_side)%>%
               rename('pre_type'='type','soma_side_pre'='soma_side'),
@@ -113,7 +104,7 @@ job.prout.mcns.output.2 <- job.prout.mcns.output.1%>%
   mutate(pre_normed_weight=weight/total_synapses_out)%>%
   filter(pre_normed_weight>=0.02)
 
-unique.post.id <- job.prout.mcns.output.2%>%pull(post_id_list)%>%unlist()%>%unique()
+unique.post.id <- do.call(c, job.prout.mcns.output.2 %>% pull(post_id_list))
 print(length(unique.post.id))
 ```
 Function
@@ -165,19 +156,12 @@ generate_mcns_output <- function(starter = c("JO-B", "(JO-B)"),
     return(sum_synapses)
   }
   
-  # For each starter value, retrieve MCNS IDs and then get the partner connections.
-  result_list <- lapply(starter, function(x) {
-    # Obtain MCNS IDs for the current starter (cf_ids is assumed to be defined)
-    job_mcns_id <- cf_ids(malecns = x)
-    # Retrieve partner connections for the obtained IDs
-    cf_partners(job_mcns_id, partners = "out", threshold = synapse_threshold)
-  })
-  
-  # Combine the individual partner data frames row-wise.
-  final_df <- dplyr::bind_rows(result_list)
+  #get cf_ids
+  job_mcns_id <- do.call(c, lapply(starter, function(x) cf_ids(malecns = x)))
+
   
   # Join with additional type information and remove duplicates.
-  job.prout.mcns.output.0 <- final_df %>%
+  job.prout.mcns.output.0 <-   cf_partners(job_mcns_id, partners = "out", threshold = synapse_threshold)%>%
     left_join(mba.type.coalesced %>%
                 dplyr::select(bodyid, type, soma_side) %>%
                 dplyr::rename(pre_type = type, soma_side_pre = soma_side),
@@ -222,22 +206,324 @@ generate_mcns_output <- function(starter = c("JO-B", "(JO-B)"),
     filter(pre_normed_weight >= norm_cutoff)
   
   # Unpack post_id_list and get the unique post ids.
-  unique_post_ids <- job.prout.mcns.output.2 %>%
-    pull(post_id_list) %>%
-    unlist() %>%
-    unique()
+  unique_post_ids <- do.call(c, job.prout.mcns.output.2 %>% pull(post_id_list))
   
   # Return the filtered output and unique post IDs in a list.
   return(list(output = job.prout.mcns.output.2,
               unique_post_ids = unique_post_ids))
 }
-
-result <- generate_mcns_output(starter = c("JO-B", "(JO-B)"),
-                               drop_hemispheres = FALSE,
-                               synapse_threshold = 5,
-                               norm_cutoff = 0.02)
 ```
 
+
+```{r}
+#lvl0
+result0 <- generate_mcns_output(starter = c("JO-B", "(JO-B)"),
+                               drop_hemispheres = FALSE,
+                               synapse_threshold = 5,
+                               norm_cutoff = 0.05)
+lvl0.prout.mcns.output <- result0$output
+
+#lvl1
+result1 <- generate_mcns_output(result0$unique_post_ids,
+                               drop_hemispheres = FALSE,
+                               synapse_threshold = 5,
+                               norm_cutoff = 0.05)
+
+lvl1.prout.mcns.output <- result1$output
+
+#lvl2
+result2 <- generate_mcns_output(result1$unique_post_ids,
+                               drop_hemispheres = FALSE,
+                               synapse_threshold = 5,
+                               norm_cutoff = 0.05)
+
+lvl2.prout.mcns.output <- result2$output
+
+#lvl3
+result3 <- generate_mcns_output(result2$unique_post_ids,
+                               drop_hemispheres = FALSE,
+                               synapse_threshold = 5,
+                               norm_cutoff = 0.05)
+
+lvl3.prout.mcns.output <- result3$output
+
+#lvl4
+result4 <- generate_mcns_output(result3$unique_post_ids,
+                               drop_hemispheres = FALSE,
+                               synapse_threshold = 5,
+                               norm_cutoff = 0.05)
+lvl4.prout.mcns.output <- result4$output
+
+
+```
+
+
+
+
+Raw example of how the function works and test edge cases with flat connectome
+```{r}
+path <- '/Users/fkampf/Downloads/snapshots_2025-02-11-a4c0d9-unlocked_flat-connectome_connectome-weights-2025-02-11-a4c0d9-unlocked-minconf-0.5-primary-only.feather'
+starter = c('JO-B','(JO-B)')
+drop_hemispheres <- F
+
+#load flat connectome
+flat.connectome.feather <-  arrow::open_dataset(path, format = 'feather')
+flat.connectome.df.0 <- conn_feather %>%
+  collect()%>%
+  data.frame()
+
+#populate names
+flat.connectome.df.1 <- flat.connectome.df.0%>%
+  left_join(mba.type.coalesced%>%
+              select(bodyid,type,soma_side)%>%
+              rename('pre_type'='type','soma_side_pre'='soma_side'),
+            by=c('body_pre'='bodyid'))%>%
+  select(-type_pre)%>%
+  left_join(mba.type.coalesced%>%
+              select(bodyid,type,soma_side)%>%
+              rename('post_type'='type','soma_side_post'='soma_side'),
+            by=c('body_post'='bodyid'))%>%
+  select(-type_post)%>%
+  rename(pre_id=body_pre,post_id=body_post)%>%
+  filter(weight>=synapse_threshold)
+flat.connectome.df.2<-flat.connectome.df.1%>%
+  filter(pre_type %in% starter)
+
+
+
+
+
+print(length(flat.connectome.df.2%>%pull(post_id)%>%unique()))
+
+if (drop_hemispheres){
+job.prout.mcns.output.1 <- flat.connectome.df.2 %>%
+  group_by(pre_type, post_type) %>%
+  summarise(
+    pre_id_list = I(list(unique(pre_id))),
+    post_id_list = I(list(unique(post_id))),
+    weight = sum(weight),
+    .groups = 'drop'  # optional: ungroups the result
+  )
+} else{
+  job.prout.mcns.output.1 <- flat.connectome.df.2 %>%
+  group_by(pre_type, post_type,soma_side_pre,soma_side_post) %>%
+  summarise(
+    pre_id_list = I(list(unique(pre_id))),
+    post_id_list = I(list(unique(post_id))),
+    weight = sum(weight),
+    .groups = 'drop'  # optional: ungroups the result
+  )
+}
+
+
+query_total_synapses_ex<-function(query_list,query_df,pre_or_post='pre'){
+  if (pre_or_post=='pre'){
+  sum_synapses <-query_df%>%
+    filter(pre_id %in% query_list)%>%
+    pull(weight)%>%
+    sum()
+  return(sum_synapses)
+  } else {
+    sum_synapses <-query_df%>%
+    filter(post_id %in% query_list)%>%
+    pull(weight)%>%
+    sum()
+  }
+}
+
+#norm by the number of pre_synapses
+job.prout.mcns.output.2 <- job.prout.mcns.output.1%>%
+  rowwise() %>%
+  mutate(total_synapses_out = query_total_synapses_ex(pre_id_list,flat.connectome.df.1,pre_or_post = 'pre'))%>%
+  mutate(total_synapses_in = query_total_synapses_ex(post_id_list,flat.connectome.df.1,pre_or_post = 'post'))%>%
+  ungroup() %>%
+  mutate(pre_normed_weight=weight/total_synapses_out)%>%
+  mutate(post_normed_weight=weight/total_synapses_in)
+
+unique.post.id <- do.call(c, job.prout.mcns.output.2 %>% pull(post_id_list))
+print(length(unique.post.id))
+```
+
+
+Function flat connectome
+
+```{r}
+#' Generate Underlying Connectivity Data for Effective Connectivity Explorations
+#'
+#' This function loads a flat connectome from a Feather file and generates a summarized version
+#' of the connectivity data. It is intended to provide the underlying connectivity data for effective
+#' connectivity explorations. The function performs the following steps:
+#' 
+#' 1. Loads a flat connectome dataset from a Feather file.
+#' 2. Joins additional type information (for both pre- and post-synaptic elements) from the
+#'    object `mba.type.coalesced`.
+#' 3. Filters the connectome rows by a synapse threshold and by the pre-synaptic type (based on the 
+#'    provided starter vector).
+#' 4. Groups and summarizes the connections, aggregating lists of unique pre- and post-synaptic IDs,
+#'    and sums the weights.
+#' 5. Computes the total pre- and post-synapse weights from the complete flat connectome, and then
+#'    calculates normalized weights.
+#' 6. Optionally filters out groups with a normalized pre-synaptic weight below a specified cutoff.
+#'
+#' @param path A character string specifying the file path for the flat connectome Feather file.
+#'   Default is '/Users/fkampf/Downloads/snapshots_2025-02-11-a4c0d9-unlocked_flat-connectome_connectome-weights-2025-02-11-a4c0d9-unlocked-minconf-0.5-primary-only.feather'.
+#' @param starter A character vector of starter IDs to filter the data by pre-synaptic type.
+#'   Default is c("JO-B", "(JO-B)").
+#' @param drop_hemispheres Logical indicating whether to group without hemisphere information.
+#'   If TRUE, the grouping is done only by pre_type and post_type; if FALSE, additional grouping by
+#'   soma_side_pre and soma_side_post is applied. Default is FALSE.
+#' @param synapse_threshold Numeric synapse threshold; only rows with weight greater than or equal
+#'   to this threshold are included. Default is 5.
+#'
+#' @return A list with two elements:
+#' \describe{
+#'   \item{output}{A data frame/tibble with the summarized and filtered connectivity output,
+#'                 including normalized pre- and post-synaptic weights.}
+#'   \item{unique_post_ids}{A vector with the unique post-synaptic IDs extracted from the output.}
+#' }
+#'
+#' @examples
+#' \dontrun{
+#'   result <- generate_mcns_output()
+#'   head(result$output)
+#'   print(result$unique_post_ids)
+#' }
+#'
+generate_mcns_output_flat <- function(starter = c("JO-B", "(JO-B)"),
+                                 drop_hemispheres = FALSE,
+                                 synapse_threshold = 5,
+                                 norm_cutoff = 0.02,
+                                 path ="/Users/fkampf/Downloads/snapshots_2025-02-11-a4c0d9-unlocked_flat-connectome_connectome-weights-2025-02-11-a4c0d9-unlocked-minconf-0.5-primary-only.feather") {
+  
+  library(dplyr)
+  library(arrow)
+  
+  # Load the flat connectome dataset from Feather.  
+  # (Assumes that the Feather file conforms to the expected schema.)
+  flat.connectome.feather <- arrow::open_dataset(path, format = "feather")
+  flat.connectome.df.0 <- flat.connectome.feather %>%
+    collect() %>%
+    data.frame()
+  
+  # Join additional type information for pre- and post-synaptic elements.
+  flat.connectome.df.1 <- flat.connectome.df.0 %>%
+    left_join(mba.type.coalesced %>%
+                select(bodyid, type, soma_side) %>%
+                rename(pre_type = type, soma_side_pre = soma_side),
+              by = c("body_pre" = "bodyid")) %>%
+    select(-type_pre) %>%
+    left_join(mba.type.coalesced %>%
+                select(bodyid, type, soma_side) %>%
+                rename(post_type = type, soma_side_post = soma_side),
+              by = c("body_post" = "bodyid")) %>%
+    select(-type_post) %>%
+    rename(pre_id = body_pre, post_id = body_post) %>%
+    filter(weight >= synapse_threshold)
+  
+  # Filter rows by pre-synaptic type (using the starter vector)
+  flat.connectome.df.2 <- flat.connectome.df.1 %>%
+    filter(pre_type %in% starter | pre_id %in% starter)
+  
+  # Print the number of unique post IDs in the filtered dataset.
+  print(length(flat.connectome.df.2 %>% pull(post_id) %>% unique()))
+  
+  # Group and summarize the data.
+  if (drop_hemispheres) {
+    job.prout.mcns.output.1 <- flat.connectome.df.2 %>%
+      group_by(pre_type, post_type) %>%
+      summarise(
+        pre_id_list = I(list(unique(pre_id))),
+        post_id_list = I(list(unique(post_id))),
+        weight = sum(weight),
+        .groups = "drop"
+      )
+  } else {
+    job.prout.mcns.output.1 <- flat.connectome.df.2 %>%
+      group_by(pre_type, post_type, soma_side_pre, soma_side_post) %>%
+      summarise(
+        pre_id_list = I(list(unique(pre_id))),
+        post_id_list = I(list(unique(post_id))),
+        weight = sum(weight),
+        .groups = "drop"
+      )
+  }
+  
+  # Define a helper function to sum synapses for a given query list.
+  query_total_synapses_ex <- function(query_list, query_df, pre_or_post = "pre") {
+    if (pre_or_post == "pre") {
+      sum_synapses <- query_df %>%
+        filter(pre_id %in% query_list) %>%
+        pull(weight) %>%
+        sum()
+    } else {
+      sum_synapses <- query_df %>%
+        filter(post_id %in% query_list) %>%
+        pull(weight) %>%
+        sum()
+    }
+    return(sum_synapses)
+  }
+  
+  # Compute the total pre- and post-synaptic weights for each group,
+  # then calculate the normalized weights
+  job.prout.mcns.output.2 <- job.prout.mcns.output.1 %>%
+    rowwise() %>%
+    mutate(total_synapses_out = query_total_synapses_ex(pre_id_list, flat.connectome.df.1, pre_or_post = "pre")) %>%
+    mutate(total_synapses_in = query_total_synapses_ex(post_id_list, flat.connectome.df.1, pre_or_post = "post")) %>%
+    ungroup() %>%
+    mutate(pre_normed_weight = weight / total_synapses_out) %>%
+    mutate(post_normed_weight = weight / total_synapses_in)
+  
+  # Unpack the list of post IDs while preserving any necessary attributes.
+  unique_post_ids <- do.call(c, job.prout.mcns.output.2 %>% pull(post_id_list))
+  
+  # Print the number of unique post IDs in the final output.
+  print(length(unique_post_ids))
+  
+  # Return a list with the summarized output and the unique post IDs.
+  return(list(output = job.prout.mcns.output.2,
+              unique_post_ids = unique_post_ids))
+}
+```
+
+
+Run function for 4 JO-B levels
+
+```{r}
+#lvl0
+result0 <- generate_mcns_output_flat(starter = c("JO-B", "(JO-B)"),
+                               drop_hemispheres = FALSE,
+                               synapse_threshold = 5)
+lvl0.prout.mcns.output <- result0$output
+
+#lvl1
+result1 <- generate_mcns_output_flat(result0$unique_post_ids,
+                               drop_hemispheres = FALSE,
+                               synapse_threshold = 5)
+
+lvl1.prout.mcns.output <- result1$output
+
+#lvl2
+result2 <- generate_mcns_output_flat(result1$unique_post_ids,
+                               drop_hemispheres = FALSE,
+                               synapse_threshold = 5)
+
+lvl2.prout.mcns.output <- result2$output
+
+#lvl3
+result3 <- generate_mcns_output_flat(result2$unique_post_ids,
+                               drop_hemispheres = FALSE,
+                               synapse_threshold = 5,
+                               norm_cutoff = 0.05)
+
+lvl3.prout.mcns.output <- result3$output
+
+#lvl4
+result4 <- generate_mcns_output_flat(result3$unique_post_ids,
+                               drop_hemispheres = FALSE,
+                               synapse_threshold = 5,)
+lvl4.prout.mcns.output <- result4$output
+```
 
 
 
