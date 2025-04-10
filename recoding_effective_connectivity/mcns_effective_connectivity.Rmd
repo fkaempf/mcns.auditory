@@ -16,6 +16,7 @@ library(igraph)
 library(fafbseg)
 library(tidygraph)
 library(ggraph)
+library(jsonlite)
 ```
 
 Load metadata all cells
@@ -27,12 +28,15 @@ mba.type.coalesced <-  mba %>%
                          flywire_type, 
                          hemibrain_type, 
                          manc_type),
-         top_nt=celltype_predicted_nt)
+         top_nt=coalesce(consensus_nt,celltype_predicted_nt,predicted_nt))
 #flytable<-flytable_query("select * from info",limit=1000) #this throws an error right now?
 mba_synonyms <- mba%>%
   select(bodyid,type,flywire_type,synonyms)%>%
   filter(!is.na(flywire_type))
 mba_synonyms_unique <- mba_synonyms%>%distinct(type,.keep_all=T)
+
+#data<-fromJSON('/Users/fkampf/mappings.json')
+
 ```
 
 
@@ -43,70 +47,6 @@ drop_hemispheres <- F
 ```
 
 
-
-
-Raw example of how the function works and test edge cases
-
-```{r}
-
-starter = c('JO-B','(JO-B)')
-drop_hemispheres <- F
-
-job_mcns_id <- do.call(c, lapply(starter, function(x) cf_ids(malecns = x)))
-
-job.prout.mcns.output.0 <-   cf_partners(job_mcns_id, partners = "out", threshold = synapse_threshold)%>%
-  left_join(mba.type.coalesced%>%
-              select(bodyid,type,soma_side)%>%
-              rename('pre_type'='type','soma_side_pre'='soma_side'),
-            by='bodyid')%>%
-  distinct()
-
-print(length(job.prout.mcns.output.0%>%pull(post_id)%>%unique()))
-
-if (drop_hemispheres){
-job.prout.mcns.output.1 <- job.prout.mcns.output.0 %>%
-  group_by(pre_type, type) %>%
-  summarise(
-    pre_id_list = I(list(unique(pre_id))),
-    post_id_list = I(list(unique(post_id))),
-    weight = sum(weight),
-    dataset = first(dataset),
-    .groups = 'drop'  # optional: ungroups the result
-  )%>%
-  rename(post_type=type)
-} else{
-  job.prout.mcns.output.1 <- job.prout.mcns.output.0 %>%
-  group_by(pre_type, type,soma_side_pre,somaSide) %>%
-  summarise(
-    pre_id_list = I(list(unique(pre_id))),
-    post_id_list = I(list(unique(post_id))),
-    weight = sum(weight),
-    dataset = first(dataset),
-    .groups = 'drop'  # optional: ungroups the result
-  )%>%
-  rename(post_type=type,soma_side_post=somaSide)
-}
-
-
-query_total_synapses<-function(query_list,query_df){
-  sum_synapses <-query_df%>%
-    filter(bodyid %in% query_list)%>%
-    pull(weight)%>%
-    sum()
-  return(sum_synapses)
-}
-
-#norm by the number of pre_synapses
-job.prout.mcns.output.2 <- job.prout.mcns.output.1%>%
-  rowwise() %>%
-  mutate(total_synapses_out = query_total_synapses(pre_id_list,job.prout.mcns.output.0))%>%
-  ungroup() %>%
-  mutate(pre_normed_weight=weight/total_synapses_out)%>%
-  filter(pre_normed_weight>=0.02)
-
-unique.post.id <- do.call(c, job.prout.mcns.output.2 %>% pull(post_id_list))
-print(length(unique.post.id))
-```
 Function
 ```{r}
 generate_mcns_output <- function(starter = c("JO-B", "(JO-B)"),
@@ -215,317 +155,447 @@ generate_mcns_output <- function(starter = c("JO-B", "(JO-B)"),
 ```
 
 
-```{r}
-#lvl0
-result0 <- generate_mcns_output(starter = c("JO-B", "(JO-B)"),
-                               drop_hemispheres = FALSE,
-                               synapse_threshold = 5,
-                               norm_cutoff = 0.05)
-lvl0.prout.mcns.output <- result0$output
-
-#lvl1
-result1 <- generate_mcns_output(result0$unique_post_ids,
-                               drop_hemispheres = FALSE,
-                               synapse_threshold = 5,
-                               norm_cutoff = 0.05)
-
-lvl1.prout.mcns.output <- result1$output
-
-#lvl2
-result2 <- generate_mcns_output(result1$unique_post_ids,
-                               drop_hemispheres = FALSE,
-                               synapse_threshold = 5,
-                               norm_cutoff = 0.05)
-
-lvl2.prout.mcns.output <- result2$output
-
-#lvl3
-result3 <- generate_mcns_output(result2$unique_post_ids,
-                               drop_hemispheres = FALSE,
-                               synapse_threshold = 5,
-                               norm_cutoff = 0.05)
-
-lvl3.prout.mcns.output <- result3$output
-
-#lvl4
-result4 <- generate_mcns_output(result3$unique_post_ids,
-                               drop_hemispheres = FALSE,
-                               synapse_threshold = 5,
-                               norm_cutoff = 0.05)
-lvl4.prout.mcns.output <- result4$output
-
-
-```
-
-
-
 
 Raw example of how the function works and test edge cases with flat connectome
 ```{r}
-path <- '/Users/fkampf/Downloads/snapshots_2025-02-11-a4c0d9-unlocked_flat-connectome_connectome-weights-2025-02-11-a4c0d9-unlocked-minconf-0.5-primary-only.feather'
-starter = c('JO-B','(JO-B)')
-drop_hemispheres <- F
-
-#load flat connectome
-flat.connectome.feather <-  arrow::open_dataset(path, format = 'feather')
-flat.connectome.df.0 <- conn_feather %>%
-  collect()%>%
-  data.frame()
-
-#populate names
-flat.connectome.df.1 <- flat.connectome.df.0%>%
-  left_join(mba.type.coalesced%>%
-              select(bodyid,type,soma_side)%>%
-              rename('pre_type'='type','soma_side_pre'='soma_side'),
-            by=c('body_pre'='bodyid'))%>%
-  select(-type_pre)%>%
-  left_join(mba.type.coalesced%>%
-              select(bodyid,type,soma_side)%>%
-              rename('post_type'='type','soma_side_post'='soma_side'),
-            by=c('body_post'='bodyid'))%>%
-  select(-type_post)%>%
-  rename(pre_id=body_pre,post_id=body_post)%>%
-  filter(weight>=synapse_threshold)
-flat.connectome.df.2<-flat.connectome.df.1%>%
-  filter(pre_type %in% starter)
-
-
-
-
-
-print(length(flat.connectome.df.2%>%pull(post_id)%>%unique()))
-
-if (drop_hemispheres){
-job.prout.mcns.output.1 <- flat.connectome.df.2 %>%
-  group_by(pre_type, post_type) %>%
-  summarise(
-    pre_id_list = I(list(unique(pre_id))),
-    post_id_list = I(list(unique(post_id))),
-    weight = sum(weight),
-    .groups = 'drop'  # optional: ungroups the result
-  )
-} else{
-  job.prout.mcns.output.1 <- flat.connectome.df.2 %>%
-  group_by(pre_type, post_type,soma_side_pre,soma_side_post) %>%
-  summarise(
-    pre_id_list = I(list(unique(pre_id))),
-    post_id_list = I(list(unique(post_id))),
-    weight = sum(weight),
-    .groups = 'drop'  # optional: ungroups the result
-  )
-}
-
-
-query_total_synapses_ex<-function(query_list,query_df,pre_or_post='pre'){
-  if (pre_or_post=='pre'){
-  sum_synapses <-query_df%>%
-    filter(pre_id %in% query_list)%>%
-    pull(weight)%>%
-    sum()
-  return(sum_synapses)
-  } else {
-    sum_synapses <-query_df%>%
-    filter(post_id %in% query_list)%>%
-    pull(weight)%>%
-    sum()
-  }
-}
-
-#norm by the number of pre_synapses
-job.prout.mcns.output.2 <- job.prout.mcns.output.1%>%
-  rowwise() %>%
-  mutate(total_synapses_out = query_total_synapses_ex(pre_id_list,flat.connectome.df.1,pre_or_post = 'pre'))%>%
-  mutate(total_synapses_in = query_total_synapses_ex(post_id_list,flat.connectome.df.1,pre_or_post = 'post'))%>%
-  ungroup() %>%
-  mutate(pre_normed_weight=weight/total_synapses_out)%>%
-  mutate(post_normed_weight=weight/total_synapses_in)
-
-unique.post.id <- do.call(c, job.prout.mcns.output.2 %>% pull(post_id_list))
-print(length(unique.post.id))
-```
-
-
-Function flat connectome
-
-```{r}
-#' Generate Underlying Connectivity Data for Effective Connectivity Explorations
-#'
-#' This function loads a flat connectome from a Feather file and generates a summarized version
-#' of the connectivity data. It is intended to provide the underlying connectivity data for effective
-#' connectivity explorations. The function performs the following steps:
-#' 
-#' 1. Loads a flat connectome dataset from a Feather file.
-#' 2. Joins additional type information (for both pre- and post-synaptic elements) from the
-#'    object `mba.type.coalesced`.
-#' 3. Filters the connectome rows by a synapse threshold and by the pre-synaptic type (based on the 
-#'    provided starter vector).
-#' 4. Groups and summarizes the connections, aggregating lists of unique pre- and post-synaptic IDs,
-#'    and sums the weights.
-#' 5. Computes the total pre- and post-synapse weights from the complete flat connectome, and then
-#'    calculates normalized weights.
-#' 6. Optionally filters out groups with a normalized pre-synaptic weight below a specified cutoff.
-#'
-#' @param path A character string specifying the file path for the flat connectome Feather file.
-#'   Default is '/Users/fkampf/Downloads/snapshots_2025-02-11-a4c0d9-unlocked_flat-connectome_connectome-weights-2025-02-11-a4c0d9-unlocked-minconf-0.5-primary-only.feather'.
-#' @param starter A character vector of starter IDs to filter the data by pre-synaptic type.
-#'   Default is c("JO-B", "(JO-B)").
-#' @param drop_hemispheres Logical indicating whether to group without hemisphere information.
-#'   If TRUE, the grouping is done only by pre_type and post_type; if FALSE, additional grouping by
-#'   soma_side_pre and soma_side_post is applied. Default is FALSE.
-#' @param synapse_threshold Numeric synapse threshold; only rows with weight greater than or equal
-#'   to this threshold are included. Default is 5.
-#'
-#' @return A list with two elements:
-#' \describe{
-#'   \item{output}{A data frame/tibble with the summarized and filtered connectivity output,
-#'                 including normalized pre- and post-synaptic weights.}
-#'   \item{unique_post_ids}{A vector with the unique post-synaptic IDs extracted from the output.}
-#' }
-#'
-#' @examples
-#' \dontrun{
-#'   result <- generate_mcns_output()
-#'   head(result$output)
-#'   print(result$unique_post_ids)
-#' }
-#'
 generate_mcns_output_flat <- function(starter = c("JO-B", "(JO-B)"),
-                                 drop_hemispheres = FALSE,
-                                 synapse_threshold = 5,
-                                 norm_cutoff = 0.02,
-                                 path ="/Users/fkampf/Downloads/snapshots_2025-02-11-a4c0d9-unlocked_flat-connectome_connectome-weights-2025-02-11-a4c0d9-unlocked-minconf-0.5-primary-only.feather") {
+                                        drop_hemispheres = FALSE,
+                                        use_fw_names = TRUE,
+                                        synapse_threshold = 5,
+                                        norm_cutoff = 0.02,
+                                        path = "/Users/fkampf/Downloads/snapshots_2025-02-11-a4c0d9-unlocked_flat-connectome_connectome-weights-2025-02-11-a4c0d9-unlocked-minconf-0.5-primary-only.feather",
+                                        debug = TRUE) {
   
   library(dplyr)
   library(arrow)
+  library(data.table)
   
-  # Load the flat connectome dataset from Feather.  
-  # (Assumes that the Feather file conforms to the expected schema.)
+  overall_start <- Sys.time()
+
+  ## Step 1: Load the flat connectome dataset from Feather.
+  t1 <- Sys.time()
   flat.connectome.feather <- arrow::open_dataset(path, format = "feather")
   flat.connectome.df.0 <- flat.connectome.feather %>%
     collect() %>%
-    data.frame()
+    data.frame()%>%
+    mutate(body_pre=as.character(body_pre),body_post=as.character(body_post))
+  t2 <- Sys.time()
+  if (debug) message("Dataset loaded. Elapsed time for loading: ",
+                       round(as.numeric(difftime(t2, t1, units = "secs")), 2), " seconds")
   
-  # Join additional type information for pre- and post-synaptic elements.
+  ## Step 2: Join additional type information for pre- and post-synaptic elements.
+  t3 <- Sys.time()
   flat.connectome.df.1 <- flat.connectome.df.0 %>%
     left_join(mba.type.coalesced %>%
-                select(bodyid, type, soma_side) %>%
-                rename(pre_type = type, soma_side_pre = soma_side),
+                select(bodyid, 
+                       type, 
+                       soma_side,
+                       top_nt,
+                       fru_dsx,
+                       dimorphism,
+                       flywire_type) %>%
+                rename(pre_type = type, 
+                              soma_side_pre = soma_side, 
+                              pre_fru_dsx = fru_dsx, 
+                              pre_dimorphism = dimorphism, 
+                              pre_nt = top_nt,
+                              pre_fw_type=flywire_type)%>%
+                mutate(bodyid=as.character(bodyid)),
               by = c("body_pre" = "bodyid")) %>%
     select(-type_pre) %>%
     left_join(mba.type.coalesced %>%
-                select(bodyid, type, soma_side) %>%
-                rename(post_type = type, soma_side_post = soma_side),
+                select(bodyid, 
+                       type, 
+                       soma_side,
+                       top_nt,
+                       fru_dsx,
+                       dimorphism,
+                       flywire_type) %>%
+                rename(post_type = type, 
+                       soma_side_post = soma_side, 
+                       post_fru_dsx = fru_dsx, 
+                       post_dimorphism = dimorphism, 
+                       post_nt = top_nt,
+                       post_fw_type=flywire_type)%>%
+                mutate(bodyid=as.character(bodyid)),
               by = c("body_post" = "bodyid")) %>%
     select(-type_post) %>%
     rename(pre_id = body_pre, post_id = body_post) %>%
     filter(weight >= synapse_threshold)
+  t4 <- Sys.time()
+  if (debug) message("Type info joined. Elapsed time for join: ",
+                       round(as.numeric(difftime(t4, t3, units = "secs")), 2), " seconds")
   
-  # Filter rows by pre-synaptic type (using the starter vector)
+  ## Step 3: Filter rows by pre-synaptic type.
+  t5 <- Sys.time()
   flat.connectome.df.2 <- flat.connectome.df.1 %>%
     filter(pre_type %in% starter | pre_id %in% starter)
+  t6 <- Sys.time()
+  if (debug) message("Filtering complete. Elapsed time for filtering: ",
+                       round(as.numeric(difftime(t6, t5, units = "secs")), 2), " seconds")
   
-  # Print the number of unique post IDs in the filtered dataset.
-  print(length(flat.connectome.df.2 %>% pull(post_id) %>% unique()))
+  ## (Optional) Print the number of unique post IDs in the filtered dataset.
+  num_unique_post_ids <- length(flat.connectome.df.2 %>% pull(post_id) %>% unique())
+
+  ## Step 4: Group and summarize the data using data.table for fast grouping.
+  t7 <- Sys.time()
   
-  # Group and summarize the data.
-  if (drop_hemispheres) {
-    job.prout.mcns.output.1 <- flat.connectome.df.2 %>%
-      group_by(pre_type, post_type) %>%
-      summarise(
-        pre_id_list = I(list(unique(pre_id))),
-        post_id_list = I(list(unique(post_id))),
-        weight = sum(weight),
-        .groups = "drop"
-      )
-  } else {
-    job.prout.mcns.output.1 <- flat.connectome.df.2 %>%
-      group_by(pre_type, post_type, soma_side_pre, soma_side_post) %>%
-      summarise(
-        pre_id_list = I(list(unique(pre_id))),
-        post_id_list = I(list(unique(post_id))),
-        weight = sum(weight),
-        .groups = "drop"
-      )
-  }
+  majority_vote <- function(x) {
+  x <- x[!is.na(x)]
+  if (length(x) == 0) return(NA_character_)
+  tab <- table(x)
+  return(names(tab)[which.max(tab)])
+}
   
-  # Define a helper function to sum synapses for a given query list.
-  query_total_synapses_ex <- function(query_list, query_df, pre_or_post = "pre") {
-    if (pre_or_post == "pre") {
-      sum_synapses <- query_df %>%
-        filter(pre_id %in% query_list) %>%
-        pull(weight) %>%
-        sum()
-    } else {
-      sum_synapses <- query_df %>%
-        filter(post_id %in% query_list) %>%
-        pull(weight) %>%
-        sum()
-    }
-    return(sum_synapses)
-  }
+
+if (use_fw_names){
+  flat.connectome.df.2<- flat.connectome.df.2%>%
+    mutate(pre_type=coalesce(pre_fw_type,pre_type),post_type=coalesce(post_fw_type,post_type))
+} else {
+  flat.connectome.df.2<- flat.connectome.df.2%>%
+    mutate(pre_type=coalesce(pre_type,pre_fw_type),post_type=coalesce(post_type,post_fw_type))
+}
+dt_df2 <- as.data.table(flat.connectome.df.2)
+
+
+if (drop_hemispheres) {
+  job.prout.mcns.output.1 <- dt_df2[, .(
+    pre_id_list    = I(list(unique(pre_id))),
+    post_id_list   = I(list(unique(post_id))),
+    weight         = sum(weight),
+    post_fru_dsx   = majority_vote(post_fru_dsx),
+    post_dimorphism= majority_vote(post_dimorphism),
+    post_nt        = majority_vote(post_nt),
+    pre_fru_dsx    = majority_vote(pre_fru_dsx),
+    pre_dimorphism = majority_vote(pre_dimorphism),
+    pre_nt         = majority_vote(pre_nt),
+    post_fw_type   = majority_vote(post_fw_type),
+    pre_fw_type    = majority_vote(pre_fw_type)
+  ), by = .(pre_type, post_type)]
+} else {
+  job.prout.mcns.output.1 <- dt_df2[, .(
+    pre_id_list    = I(list(unique(pre_id))),
+    post_id_list   = I(list(unique(post_id))),
+    weight         = sum(weight),
+    post_fru_dsx   = majority_vote(post_fru_dsx),
+    post_dimorphism= majority_vote(post_dimorphism),
+    post_nt        = majority_vote(post_nt),
+    pre_fru_dsx    = majority_vote(pre_fru_dsx),
+    pre_dimorphism = majority_vote(pre_dimorphism),
+    pre_nt         = majority_vote(pre_nt),
+    post_fw_type   = majority_vote(post_fw_type),
+    pre_fw_type    = majority_vote(pre_fw_type)
+  ), by = .(pre_type, post_type, soma_side_pre, soma_side_post)]
+}#todo maybe group here by fw type or something to get fw types
+job.prout.mcns.output.1 <- as.data.frame(job.prout.mcns.output.1)
+
+  t8 <- Sys.time()
+  if (debug) message("Grouping done using data.table. Elapsed time for grouping: ",
+                       round(as.numeric(difftime(t8, t7, units = "secs")), 2), " seconds")
   
-  # Compute the total pre- and post-synaptic weights for each group,
-  # then calculate the normalized weights
+  ## Step 5: Precompute lookup tables for total synapse weights.
+  t9 <- Sys.time()
+  lookup_pre <- flat.connectome.df.1 %>%
+    group_by(pre_id) %>%
+    summarise(total_pre = sum(weight), .groups = "drop")
+  
+  lookup_post <- flat.connectome.df.1 %>%
+    group_by(post_id) %>%
+    summarise(total_post = sum(weight), .groups = "drop")
+  # Create named vectors for fast lookup.
+  lookup_pre_vec <- setNames(lookup_pre$total_pre, lookup_pre$pre_id)
+  lookup_post_vec <- setNames(lookup_post$total_post, lookup_post$post_id)
+  t10 <- Sys.time()
+  if (debug) message("Lookup tables computed. Elapsed time: ",round(as.numeric(difftime(t10, t9, units = "secs")), 2), " seconds")
+  
+  ## Step 6: Compute normalized weights using vectorized lookups.
+
   job.prout.mcns.output.2 <- job.prout.mcns.output.1 %>%
-    rowwise() %>%
-    mutate(total_synapses_out = query_total_synapses_ex(pre_id_list, flat.connectome.df.1, pre_or_post = "pre")) %>%
-    mutate(total_synapses_in = query_total_synapses_ex(post_id_list, flat.connectome.df.1, pre_or_post = "post")) %>%
-    ungroup() %>%
-    mutate(pre_normed_weight = weight / total_synapses_out) %>%
-    mutate(post_normed_weight = weight / total_synapses_in)
+    mutate(total_synapses_out = vapply(pre_id_list, function(ids) {
+      sum(as.numeric(lookup_pre_vec[ids]), na.rm = TRUE)
+    }, numeric(1)),
+    total_synapses_in = vapply(post_id_list, function(ids) {
+      sum(as.numeric(lookup_post_vec[ids]), na.rm = TRUE)
+    }, numeric(1))) %>%
+    mutate(pre_normed_weight = weight / total_synapses_out,
+           post_normed_weight = weight / total_synapses_in) %>%
+    filter(pre_normed_weight >= norm_cutoff)
+  t11 <- Sys.time()
+  if (debug) message("Normalization done. Elapsed time for normalization: ",
+                       round(as.numeric(difftime(t11, t10, units = "secs")), 2), " seconds")
   
-  # Unpack the list of post IDs while preserving any necessary attributes.
-  unique_post_ids <- do.call(c, job.prout.mcns.output.2 %>% pull(post_id_list))
+  ## Step 7: Unpack the list of post IDs.
+  t12 <- Sys.time()
+  unique_post_ids <- do.call(c, job.prout.mcns.output.2 %>% 
+                               pull(post_id_list))
   
-  # Print the number of unique post IDs in the final output.
-  print(length(unique_post_ids))
+  flat.connectome.df.2 <- flat.connectome.df.1 %>%
+    filter(pre_type %in% starter | pre_id %in% starter)
+  unique_post_ids <- setdiff(unique_post_ids, flat.connectome.df.2)
   
-  # Return a list with the summarized output and the unique post IDs.
+  t13 <- Sys.time()
+  if (debug) message("Unpacking done. Elapsed time for unpacking: ",
+                       round(as.numeric(difftime(t13, t12, units = "secs")), 2), " seconds")
+  
+  if (debug) {
+    message("Total elapsed time: ", round(as.numeric(difftime(t13, overall_start, units = "secs")), 2), " seconds")
+
+  }
+  
   return(list(output = job.prout.mcns.output.2,
               unique_post_ids = unique_post_ids))
 }
 ```
-
 
 Run function for 4 JO-B levels
 
 ```{r}
 #lvl0
 result0 <- generate_mcns_output_flat(starter = c("JO-B", "(JO-B)"),
-                               drop_hemispheres = FALSE,
-                               synapse_threshold = 5)
+                               drop_hemispheres = T,
+                               synapse_threshold = 5,
+                               norm_cutoff = 0.02)
 lvl0.prout.mcns.output <- result0$output
+lvl0.prout.mcns.output$level = 0
 
 #lvl1
 result1 <- generate_mcns_output_flat(result0$unique_post_ids,
-                               drop_hemispheres = FALSE,
-                               synapse_threshold = 5)
+                               drop_hemispheres = T,
+                               synapse_threshold = 5,
+                               norm_cutoff = 0.02)
 
 lvl1.prout.mcns.output <- result1$output
+lvl1.prout.mcns.output$level = 1
 
 #lvl2
 result2 <- generate_mcns_output_flat(result1$unique_post_ids,
-                               drop_hemispheres = FALSE,
-                               synapse_threshold = 5)
+                               drop_hemispheres = T,
+                               synapse_threshold = 5,
+                               norm_cutoff = 0.02)
 
 lvl2.prout.mcns.output <- result2$output
+lvl2.prout.mcns.output$level = 2
 
 #lvl3
 result3 <- generate_mcns_output_flat(result2$unique_post_ids,
-                               drop_hemispheres = FALSE,
+                               drop_hemispheres = T,
                                synapse_threshold = 5,
-                               norm_cutoff = 0.05)
+                               norm_cutoff = 0.02)
 
 lvl3.prout.mcns.output <- result3$output
+lvl3.prout.mcns.output$level = 3
 
 #lvl4
 result4 <- generate_mcns_output_flat(result3$unique_post_ids,
-                               drop_hemispheres = FALSE,
-                               synapse_threshold = 5,)
+                               drop_hemispheres = T,
+                               synapse_threshold = 5,
+                               norm_cutoff = 0.02)
 lvl4.prout.mcns.output <- result4$output
+lvl4.prout.mcns.output$level = 4
 ```
 
 
+postprocessing 
+```{r}
+
+
+
+
+all.levels.prout.mcns.output <- rbind(lvl0.prout.mcns.output,
+                                      lvl1.prout.mcns.output,
+                                      lvl2.prout.mcns.output,
+                                      lvl3.prout.mcns.output,
+                                      lvl4.prout.mcns.output)%>%
+  distinct()
+all.levels.prout.mcns.output <-all.levels.prout.mcns.output%>%filter(!is.na(pre_type),!is.na(post_type))
+#alternative add side to types
+try(all.levels.prout.mcns.output <- all.levels.prout.mcns.output %>%
+  mutate(pre_type=paste0(pre_type,'_',soma_side_pre))%>%
+  mutate(post_type=paste0(post_type,'_',soma_side_post)),silent=T)
+
+
+
+g.prout.mcns <- graph_from_data_frame(all.levels.prout.mcns.output%>%
+                             select(pre_type,
+                                    post_type,
+                                    pre_normed_weight,
+                                    level),
+                           directed = TRUE)
+```
+
+
+```{r}
+library(ggplot2)
+library(reshape2)
+
+# Your existing code
+cell_types <- c('CB1076','CB1078', 'CB3710', 'CB2521','CB1542', 'CB1038', 'CB1427', 'CB2556a', 'CB2380') #all
+#cell_types <- c('CB1078','CB1542') #selected
+cell_types <- c('(JO-B)','(JO-B)_NA') #only JO-B
+target_cells <- c("vpoEN",'CB1385',"vpoEN",'CB1385')  # List of target cells
+target_cells <- c(target_cells,'pMP2')
+target_cells <- c(target_cells,mba%>% filter(grepl('aSP-k',synonyms))%>%filter(!is.na(type))%>%pull(type)%>%unique())
+for (tc in target_cells){
+  for (lr in c('_L','_R')){
+    target_cells<-c(target_cells,paste0(tc,lr))
+    }
+}
+
+#target_cells <- c(target_cells,V(g.prout.mcns)$name[grepl("P1_", V(g.prout.mcns)$name)])
+#target_cells <- c(all.levels.prout.mcns.output%>%filter((post_type=='vpoEN')&(weight>=0.1))%>%pull(pre_type)%>%unique(),target_cells)
+
+# Transform weights using log
+E(g.prout.mcns)$log_weight <- -log(E(g.prout.mcns)$pre_normed_weight)  # Negate to convert to shortest path problem
+
+# Initialize an empty list to store results
+results <- list()
+all_important_nodes <- character()
+
+# Run shortest path calculations
+for (start in cell_types) {
+  for (end in target_cells) {
+    # Find shortest (strongest) path using Dijkstra
+    if ((start %in% V(g.prout.mcns)$name) & (end %in% V(g.prout.mcns)$name)){
+    path <- shortest_paths(g.prout.mcns, from = start, to = end, weights = E(g.prout.mcns)$log_weight, output = "both")
+    }
+    
+    # Extract path and compute final strength
+    if ((length(path$vpath[[1]]) > 0)&(start %in% V(g.prout.mcns)$name) & (end %in% V(g.prout.mcns)$name)) {  # Check if a valid path exists
+      path_nodes <- path$vpath[[1]]  # Path nodes
+      path_edges <- path$epath[[1]]  # Path edges
+      final_strength <- exp(-sum(E(g.prout.mcns)[path_edges]$log_weight))  # Convert back
+
+      # Store results
+      results[[paste(start, end, sep = "->")]] <- list(
+        start = start,
+        end = end,
+        path = paste(V(g.prout.mcns)[path_nodes]$name, collapse = " -> "),
+        strength = final_strength
+      )
+      all_important_nodes = c(all_important_nodes,V(g.prout.mcns)[path_nodes]$name)
+    } else {
+      # If no path exists, store NA
+            results[[paste(start, end, sep = "->")]] <- list(
+              start = start,
+              end = end,
+              path = 0,
+              strength = 0)
+            
+            
+    }
+  }
+}
+
+# Convert results to a data frame
+results_df <- do.call(rbind, lapply(names(results), function(x) {
+  data.frame(
+    start = results[[x]]$start, 
+    end = results[[x]]$end,
+    path = results[[x]]$path, 
+    strength = results[[x]]$strength, 
+    stringsAsFactors = FALSE
+  )
+}))
+```
+
+Open graph in RCy3
+
+```{r}
+library(RCy3)
+library(dplyr)
+
+
+nodes_to_keep <- c("JO-B","JO-B",'CB1078','CB1542','CB2108','CB1383','CB1066,CB3649
+','CB2364','CB3382','PVLP033','CB3162','CB3382','vpoEN',V(g.prout.mcns)$name[grepl("P1_", V(g.prout.mcns)$name)],
+'AVLP721m','AVLP299_c','DNp55','CB1385','AVLP711m','SIP108m','SIP120m','SIP116m','SIP114m','PVLP211m','pMP2','AVLP744m')
+nodes_to_keep <- unique(all_important_nodes)
+
+#cleaning up graph and subsampling
+g.sub.prout.mcns <- induced_subgraph(g.prout.mcns, vids = V(g.prout.mcns)[name %in% nodes_to_keep])
+
+
+nodes_to_filter <- V(g.sub.prout.mcns)[grepl("^P1_", name)]
+try(edges_to_delete <- incident(g.sub.prout.mcns, nodes_to_filter, mode = "out"),silent=T)
+try(g.sub.prout.mcns <- delete_edges(g.sub.prout.mcns, edges_to_delete),silent=T)
+
+
+
+node_names <- V(g.sub.prout.mcns)$name
+distance_to_JO_B <- shortest.paths(g.sub.prout.mcns, to = V(g.sub.prout.mcns)[name == "(JO-B)_NA"], weights = NA)
+distance_to_JO_B <- shortest.paths(g.sub.prout.mcns, to = V(g.sub.prout.mcns)[name == "(JO-B)"], weights = NA)
+V(g.sub.prout.mcns)$distance_to_JO_B <- ifelse(node_names == "(JO-B)", 0, as.integer(distance_to_JO_B))
+
+fru_dsx_values <- all.levels.prout.mcns.output %>%
+    group_by(pre_type,post_type) %>%
+    mutate(pre_fru_dsx = !is.na(pre_fru_dsx),
+           post_fru_dsx = !is.na(post_fru_dsx))%>%
+    summarize(pre_fru_dsx = first(pre_fru_dsx),
+              post_fru_dsx = first(post_fru_dsx)) %>%
+    ungroup()%>%
+    pivot_longer(
+        cols = c(pre_fru_dsx, post_fru_dsx, pre_type, post_type),
+        names_to = c("side",".value"),  # .value tells pivot_longer to use part of the name as the output column name
+        names_sep = "_"                # splits the column names at the underscore
+    ) %>%select(-side)%>%distinct()
+
+
+nt_values <- all.levels.prout.mcns.output %>%
+    group_by(pre_type,post_type) %>%
+    mutate(pre_nt = first(pre_nt),
+           post_nt = first(post_nt))%>%
+    summarize(pre_nt = first(pre_nt),
+              post_nt = first(post_nt)) %>%
+    ungroup()%>%
+    pivot_longer(
+        cols = c(pre_nt, post_nt, pre_type, post_type),
+        names_to = c("side",".value"),  # .value tells pivot_longer to use part of the name as the output column name
+        names_sep = "_"                # splits the column names at the underscore
+    ) %>%select(-side)%>%distinct()
+
+
+
+nt_for_vertices <- nt_values$nt[match(V(g.sub.prout.mcns)$name, nt_values$type)]
+
+
+fru_dsx_for_vertices <- fru_dsx_values$fru[match(V(g.sub.prout.mcns)$name, fru_dsx_values$type)]
+
+
+V(g.sub.prout.mcns)$nt <- nt_for_vertices
+V(g.sub.prout.mcns)$fru_dsx <- fru_dsx_for_vertices
+
+el<- as_edgelist(g.sub.prout.mcns)
+is_p1p1 <- grepl("^P1_", el[, 1])# & grepl("^P1_", el[, 2])
+E(g.sub.prout.mcns)$is_p1_p1 <- is_p1p1
+
+rename_dict <- list(
+  "CB1078" = "aPN1_CB1078",
+  "CB1542" = "aPN1_CB1542",
+  "CB3382" = "aIP-g_CB3382",
+  "CB2364" = "aSP-K_CB2364",
+  'AVLP721m' = 'vPN1_AVLP721m',
+  "AVLP299_c" = "aIP-b_AVLP299_c",
+  "SIP114m" = "aSP-a_SIP114m",
+  'SIP116m' = 'aSP-a_SIP116m',
+  "SIP120m" = "aSP-a_SIP120m",
+  "PVLP211m" = "pIP-e_PVLP211m",
+  'AVLP744m' = 'pIP-e_AVLP744m',
+  'SIP108m'='pIP-e_SIP108m',
+  'AVLP711m'='pIP-e_AVLP711m',
+  'CB1385' = 'vpoIN_CB1385'
+  
+)
+
+
+# Apply the dictionary to rename the vertices in the graph
+V(g.sub.prout.mcns)$name <- sapply(V(g.sub.prout.mcns)$name, function(x) ifelse(x %in% names(rename_dict), rename_dict[[x]], x))
+
+
+
+
+RCy3::createNetworkFromIgraph(g.sub.prout.mcns)
+
+
+```
 
 
 
