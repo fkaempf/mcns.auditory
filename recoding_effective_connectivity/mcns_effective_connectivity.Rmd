@@ -164,7 +164,8 @@ generate_mcns_output_flat <- function(starter = c("JO-B", "(JO-B)"),
                                         synapse_threshold = 5,
                                         norm_cutoff = 0.02,
                                         path = "/Users/fkampf/Downloads/snapshots_2025-02-11-a4c0d9-unlocked_flat-connectome_connectome-weights-2025-02-11-a4c0d9-unlocked-minconf-0.5-primary-only.feather",
-                                        debug = TRUE) {
+                                        debug = TRUE,
+                                      just_load=FALSE) {
   
   library(dplyr)
   library(arrow)
@@ -292,7 +293,7 @@ job.prout.mcns.output.1 <- as.data.frame(job.prout.mcns.output.1)
   t8 <- Sys.time()
   if (debug) message("Grouping done using data.table. Elapsed time for grouping: ",
                        round(as.numeric(difftime(t8, t7, units = "secs")), 2), " seconds")
-  
+  if(!just_load){
   ## Step 5: Precompute lookup tables for total synapse weights.
   t9 <- Sys.time()
   lookup_pre <- flat.connectome.df.1 %>%
@@ -323,74 +324,87 @@ job.prout.mcns.output.1 <- as.data.frame(job.prout.mcns.output.1)
   t11 <- Sys.time()
   if (debug) message("Normalization done. Elapsed time for normalization: ",
                        round(as.numeric(difftime(t11, t10, units = "secs")), 2), " seconds")
-  
-  ## Step 7: Unpack the list of post IDs.
-  t12 <- Sys.time()
-  unique_post_ids <- do.call(c, job.prout.mcns.output.2 %>% 
-                               pull(post_id_list))
-  
-  flat.connectome.df.2 <- flat.connectome.df.1 %>%
-    filter(pre_type %in% starter | pre_id %in% starter)
-  unique_post_ids <- setdiff(unique_post_ids, flat.connectome.df.2)
-  
-  t13 <- Sys.time()
-  if (debug) message("Unpacking done. Elapsed time for unpacking: ",
-                       round(as.numeric(difftime(t13, t12, units = "secs")), 2), " seconds")
-  
+  }else{
+  job.prout.mcns.output.2<- job.prout.mcns.output.1
+  }
+
+  t11 <- Sys.time()
   if (debug) {
-    message("Total elapsed time: ", round(as.numeric(difftime(t13, overall_start, units = "secs")), 2), " seconds")
+    message("Total elapsed time: ", round(as.numeric(difftime(t11, overall_start, units = "secs")), 2), " seconds")
 
   }
   
-  return(list(output = job.prout.mcns.output.2,
-              unique_post_ids = unique_post_ids))
+  return(job.prout.mcns.output.2)
 }
 ```
+
+
+Function to unpack unique post ids
+```{r}
+unpack_unique_post_ids <- function(df) {
+  dt <- as.data.table(df)
+  unique_post_ids <- unique(dt[, unlist(post_id_list, use.names = FALSE)])
+  return(unique_post_ids)
+}
+```
+
+
 
 Run function for 4 JO-B levels
 
 ```{r}
+
+drop_hemispheres <- F
+use_fw_names <-T
+just_load=T
 #lvl0
-result0 <- generate_mcns_output_flat(starter = c("JO-B", "(JO-B)"),
-                               drop_hemispheres = T,
+lvl0.prout.mcns.output <- generate_mcns_output_flat(starter = c("JO-B", "(JO-B)"),
+                               drop_hemispheres = drop_hemispheres,
                                synapse_threshold = 5,
-                               norm_cutoff = 0.02)
-lvl0.prout.mcns.output <- result0$output
+                               norm_cutoff = 0.00,
+                               use_fw_names=use_fw_names,
+                               just_load=just_load)
+lvl0.unique.post.ids = unpack_unique_post_ids(lvl0.prout.mcns.output)
 lvl0.prout.mcns.output$level = 0
 
 #lvl1
-result1 <- generate_mcns_output_flat(result0$unique_post_ids,
-                               drop_hemispheres = T,
+lvl1.prout.mcns.output <- generate_mcns_output_flat(lvl0.unique.post.ids,
+                               drop_hemispheres = drop_hemispheres,
                                synapse_threshold = 5,
-                               norm_cutoff = 0.02)
-
-lvl1.prout.mcns.output <- result1$output
+                               norm_cutoff = 0.00,
+                               use_fw_names=use_fw_names,
+                               just_load=just_load)
+lvl1.unique.post.ids = unpack_unique_post_ids(lvl1.prout.mcns.output)
 lvl1.prout.mcns.output$level = 1
 
 #lvl2
-result2 <- generate_mcns_output_flat(result1$unique_post_ids,
-                               drop_hemispheres = T,
+lvl2.prout.mcns.output <- generate_mcns_output_flat(lvl1.unique.post.ids,
+                               drop_hemispheres = drop_hemispheres,
                                synapse_threshold = 5,
-                               norm_cutoff = 0.02)
-
-lvl2.prout.mcns.output <- result2$output
+                               norm_cutoff = 0.00,
+                               use_fw_names=use_fw_names,
+                               just_load=just_load)
+lvl2.unique.post.ids = unpack_unique_post_ids(lvl2.prout.mcns.output)
 lvl2.prout.mcns.output$level = 2
 
 #lvl3
-result3 <- generate_mcns_output_flat(result2$unique_post_ids,
-                               drop_hemispheres = T,
+lvl3.prout.mcns.output <- generate_mcns_output_flat(lvl2.unique.post.ids,
+                               drop_hemispheres = drop_hemispheres,
                                synapse_threshold = 5,
-                               norm_cutoff = 0.02)
-
-lvl3.prout.mcns.output <- result3$output
+                               norm_cutoff = 0.00,
+                               use_fw_names=use_fw_names,
+                               just_load=just_load)
+lvl3.unique.post.ids = unpack_unique_post_ids(lvl3.prout.mcns.output)
 lvl3.prout.mcns.output$level = 3
 
 #lvl4
-result4 <- generate_mcns_output_flat(result3$unique_post_ids,
-                               drop_hemispheres = T,
+lvl4.prout.mcns.output <- generate_mcns_output_flat(lvl3.unique.post.ids,
+                               drop_hemispheres = drop_hemispheres,
                                synapse_threshold = 5,
-                               norm_cutoff = 0.02)
-lvl4.prout.mcns.output <- result4$output
+                               norm_cutoff = 0.00,
+                               use_fw_names=use_fw_names,
+                               just_load=just_load)
+lvl4.unique.post.ids = unpack_unique_post_ids(lvl4.prout.mcns.output)
 lvl4.prout.mcns.output$level = 4
 ```
 
@@ -414,30 +428,104 @@ try(all.levels.prout.mcns.output <- all.levels.prout.mcns.output %>%
   mutate(post_type=paste0(post_type,'_',soma_side_post)),silent=T)
 
 
+```
 
-g.prout.mcns <- graph_from_data_frame(all.levels.prout.mcns.output%>%
-                             select(pre_type,
-                                    post_type,
-                                    pre_normed_weight,
-                                    level),
-                           directed = TRUE)
+Adjacency shenanigans
+```{r}
+
+library(dplyr)
+library(Matrix)
+library(igraph)
+
+# Combine levels and remove duplicates
+all.levels.prout.mcns.output <- rbind(lvl0.prout.mcns.output,
+                                      lvl1.prout.mcns.output,
+                                      lvl2.prout.mcns.output,
+                                      lvl3.prout.mcns.output,
+                                      lvl4.prout.mcns.output) %>%
+  distinct()%>%
+  filter(weight>=5)
+  #%>%group_by(pre_type, post_type) %>%
+  #slice_min(order_by = level, with_ties = FALSE) %>%
+  #ungroup()%>%
+  #filter(!is.na(pre_type),!is.na(post_type))
+
+neuron_types <- union(all.levels.prout.mcns.output$pre_type, all.levels.prout.mcns.output$post_type)
+
+adj_matrix <- sparseMatrix(
+  i = match(all.levels.prout.mcns.output$pre_type, neuron_types),
+  j = match(all.levels.prout.mcns.output$post_type, neuron_types),
+  x = all.levels.prout.mcns.output$weight,  # or use edge_df$syn_count or other weight column if available
+  dims = c(length(neuron_types), length(neuron_types)),
+  dimnames = list(neuron_types, neuron_types)
+)
+
+
+colScale <- function(A, na.rm = TRUE) {
+  scalefac <- 1 / Matrix::colSums(A)
+  if (na.rm) scalefac[!is.finite(scalefac)] <- 0
+  B <- A %*% Matrix::Diagonal(x = scalefac)
+  B
+  
+}
+
+rowScale <- function(A, na.rm = TRUE) {
+  scalefac <- 1 / Matrix::rowSums(A)
+  if (na.rm) scalefac[!is.finite(scalefac)] <- 0
+  B <- Matrix::Diagonal(x = scalefac) %*% A
+  B
+}
+
+adj_matrix_per_in <- colScale(adj_matrix)
+colnames(adj_matrix_per_in) <- colnames(adj_matrix)
+rownames(adj_matrix_per_in) <- rownames(adj_matrix)
+adj_matrix_thresholded <- adj_matrix_per_in
+
+adj_matrix_thresholded[adj_matrix_thresholded < 0.01] <- 0
+adj_matrix[adj_matrix_thresholded < 0.01] <- 0
+g.prout.mcns <- graph_from_adjacency_matrix(
+  adj_matrix_thresholded,
+  mode = "directed",
+  weighted = TRUE,
+  diag = FALSE
+)
+
 ```
 
 
+
+
+path finding new
+
+
 ```{r}
+
+# Define parameters for path search
+n_paths <- 3           # Number of strongest paths to find for each start-target pair
+diversity <- 'othernodes'  # othernodes,otheredges,none
+
+
 library(ggplot2)
 library(reshape2)
 
 # Your existing code
 cell_types <- c('CB1076','CB1078', 'CB3710', 'CB2521','CB1542', 'CB1038', 'CB1427', 'CB2556a', 'CB2380') #all
-#cell_types <- c('CB1078','CB1542') #selected
-cell_types <- c('(JO-B)','(JO-B)_NA') #only JO-B
+cell_types <- c('(JO-B)') #only JO-B
+#cell_types <- c('CB1542','CB1078')
+
 target_cells <- c("vpoEN",'CB1385',"vpoEN",'CB1385')  # List of target cells
 target_cells <- c(target_cells,'pMP2')
 target_cells <- c(target_cells,mba%>% filter(grepl('aSP-k',synonyms))%>%filter(!is.na(type))%>%pull(type)%>%unique())
+
 for (tc in target_cells){
-  for (lr in c('_L','_R')){
+  for (lr in c('_L','_R','_NA')){
     target_cells<-c(target_cells,paste0(tc,lr))
+    }
+}
+
+for (ct in cell_types){
+  for (lr in c('_L','_R','_NA')){
+    cell_types<-c(cell_types,paste0(ct,lr))
     }
 }
 
@@ -445,58 +533,109 @@ for (tc in target_cells){
 #target_cells <- c(all.levels.prout.mcns.output%>%filter((post_type=='vpoEN')&(weight>=0.1))%>%pull(pre_type)%>%unique(),target_cells)
 
 # Transform weights using log
-E(g.prout.mcns)$log_weight <- -log(E(g.prout.mcns)$pre_normed_weight)  # Negate to convert to shortest path problem
+E(g.prout.mcns)$log_weight <- -log(E(g.prout.mcns)$weight)  # Negate to convert to shortest path problem
 
-# Initialize an empty list to store results
+
+
+# Initialize an empty list to store results and a vector for important nodes
 results <- list()
 all_important_nodes <- character()
 
-# Run shortest path calculations
+# Loop over all start (cell_types) and target (target_cells) pairs
 for (start in cell_types) {
   for (end in target_cells) {
-    # Find shortest (strongest) path using Dijkstra
-    if ((start %in% V(g.prout.mcns)$name) & (end %in% V(g.prout.mcns)$name)){
-    path <- shortest_paths(g.prout.mcns, from = start, to = end, weights = E(g.prout.mcns)$log_weight, output = "both")
-    }
-    
-    # Extract path and compute final strength
-    if ((length(path$vpath[[1]]) > 0)&(start %in% V(g.prout.mcns)$name) & (end %in% V(g.prout.mcns)$name)) {  # Check if a valid path exists
-      path_nodes <- path$vpath[[1]]  # Path nodes
-      path_edges <- path$epath[[1]]  # Path edges
-      final_strength <- exp(-sum(E(g.prout.mcns)[path_edges]$log_weight))  # Convert back
 
-      # Store results
-      results[[paste(start, end, sep = "->")]] <- list(
+    # Only process if both start and end exist in the graph
+    if ((start %in% V(g.prout.mcns)$name) && (end %in% V(g.prout.mcns)$name)) {
+
+      # Make a copy of the graph to modify iteratively
+      g_temp <- g.prout.mcns
+      
+      # List to hold all paths for this start–end pair
+      pair_paths <- list()
+      
+      # Find up to 'n_paths' for the given pair
+      for (i in 1:n_paths) {
+        # Compute shortest path (using negative log weights so that lower is stronger)
+        path_result <- shortest_paths(g_temp, from = start, to = end,
+                                      weights = E(g_temp)$log_weight,
+                                      output = "both")
+        
+        # Check if a path was found
+        if (length(path_result$vpath[[1]]) > 0) {
+          path_nodes <- path_result$vpath[[1]]
+          path_edges <- path_result$epath[[1]]
+          # Convert back to strength: reverse the -log transform
+          final_strength <- exp(-sum(E(g_temp)[path_edges]$log_weight))
+          
+          # Save the results; note that we display the path using the names from the original graph
+          pair_paths[[paste0("path", i)]] <- list(
+            start = start,
+            end = end,
+            path = paste(V(g.prout.mcns)[path_nodes]$name, collapse = " -> "),
+            strength = final_strength
+          )
+          # Collect nodes from this path into the overall list
+          all_important_nodes <- c(all_important_nodes, V(g.prout.mcns)[path_nodes]$name)
+          
+          # Modify the temporary graph to seek a different path next time
+          if (diversity=='othernodes') {
+            # Remove intermediate nodes (all nodes except the start and end)
+            intermediate_nodes <- V(g.prout.mcns)[path_nodes]$name  # get names from the original graph
+            nodes_to_remove <- setdiff(intermediate_nodes, c(start, end))
+            if (length(nodes_to_remove) > 0) {
+              g_temp <- delete_vertices(g_temp, nodes_to_remove)
+            }
+          } else if(diversity=='otheredges'){
+            # Remove the edges used in this path so that the next path will be different
+            g_temp <- delete_edges(g_temp, path_edges)
+          }else{
+            1+1
+          }
+            
+        } else {
+          # If no further path is found, break out of the inner loop
+          break
+        }
+      }
+      # Save all the paths found for this start–end pair into the results list
+      results[[paste(start, end, sep = "->")]] <- pair_paths
+    } else {
+      # If either node doesn't exist, store an NA entry for this pair
+      results[[paste(start, end, sep = "->")]] <- list(list(
         start = start,
         end = end,
-        path = paste(V(g.prout.mcns)[path_nodes]$name, collapse = " -> "),
-        strength = final_strength
-      )
-      all_important_nodes = c(all_important_nodes,V(g.prout.mcns)[path_nodes]$name)
-    } else {
-      # If no path exists, store NA
-            results[[paste(start, end, sep = "->")]] <- list(
-              start = start,
-              end = end,
-              path = 0,
-              strength = 0)
-            
-            
+        path = NA,
+        strength = NA
+      ))
     }
   }
 }
 
-# Convert results to a data frame
-results_df <- do.call(rbind, lapply(names(results), function(x) {
-  data.frame(
-    start = results[[x]]$start, 
-    end = results[[x]]$end,
-    path = results[[x]]$path, 
-    strength = results[[x]]$strength, 
-    stringsAsFactors = FALSE
-  )
+# Flatten the nested results list into a single data frame for easier inspection:
+results_df <- do.call(rbind, lapply(results, function(pair_list) {
+  do.call(rbind, lapply(pair_list, function(r) {
+    data.frame(
+      start = r$start,
+      end = r$end,
+      path = r$path,
+      strength = r$strength,
+      stringsAsFactors = FALSE
+    )
+  }))
 }))
+
+# (Optional) Get unique important nodes encountered in all the paths:
+all_important_nodes <- unique(all_important_nodes)
+results_df_wo_na <- results_df%>%
+  filter(!is.na(strength))
+# Look at the results
+print(results_df_wo_na)
 ```
+
+
+
+
 
 Open graph in RCy3
 
@@ -509,6 +648,15 @@ nodes_to_keep <- c("JO-B","JO-B",'CB1078','CB1542','CB2108','CB1383','CB1066,CB3
 ','CB2364','CB3382','PVLP033','CB3162','CB3382','vpoEN',V(g.prout.mcns)$name[grepl("P1_", V(g.prout.mcns)$name)],
 'AVLP721m','AVLP299_c','DNp55','CB1385','AVLP711m','SIP108m','SIP120m','SIP116m','SIP114m','PVLP211m','pMP2','AVLP744m')
 nodes_to_keep <- unique(all_important_nodes)
+
+#add P1 only to neurons which would be in the graph anyway
+P1_2_add <- all.levels.prout.mcns.output%>%
+  filter(pre_type %in% nodes_to_keep,
+         grepl("^P1_", post_type))%>%
+  pull(post_type)%>%
+  unique()
+
+#nodes_to_keep<-c(nodes_to_keep,P1_2_add)
 
 #cleaning up graph and subsampling
 g.sub.prout.mcns <- induced_subgraph(g.prout.mcns, vids = V(g.prout.mcns)[name %in% nodes_to_keep])
@@ -523,7 +671,8 @@ try(g.sub.prout.mcns <- delete_edges(g.sub.prout.mcns, edges_to_delete),silent=T
 node_names <- V(g.sub.prout.mcns)$name
 distance_to_JO_B <- shortest.paths(g.sub.prout.mcns, to = V(g.sub.prout.mcns)[name == "(JO-B)_NA"], weights = NA)
 distance_to_JO_B <- shortest.paths(g.sub.prout.mcns, to = V(g.sub.prout.mcns)[name == "(JO-B)"], weights = NA)
-V(g.sub.prout.mcns)$distance_to_JO_B <- ifelse(node_names == "(JO-B)", 0, as.integer(distance_to_JO_B))
+V(g.sub.prout.mcns)$distance_to_JO_B <- ifelse(node_names == "(JO-B)_NA", 0, as.integer(distance_to_JO_B))
+#V(g.sub.prout.mcns)$distance_to_JO_B <- ifelse(node_names == "(JO-B)", 0, as.integer(distance_to_JO_B))
 
 fru_dsx_values <- all.levels.prout.mcns.output %>%
     group_by(pre_type,post_type) %>%
@@ -537,6 +686,11 @@ fru_dsx_values <- all.levels.prout.mcns.output %>%
         names_to = c("side",".value"),  # .value tells pivot_longer to use part of the name as the output column name
         names_sep = "_"                # splits the column names at the underscore
     ) %>%select(-side)%>%distinct()
+
+lvl_values <- all.levels.prout.mcns.output %>%
+    group_by(pre_type) %>%
+    summarize(level = min(level)) %>%
+    ungroup()
 
 
 nt_values <- all.levels.prout.mcns.output %>%
@@ -553,13 +707,13 @@ nt_values <- all.levels.prout.mcns.output %>%
     ) %>%select(-side)%>%distinct()
 
 
-
+lvl_for_vertices <- lvl_values$level[match(V(g.sub.prout.mcns)$name, lvl_values$pre_type)]
 nt_for_vertices <- nt_values$nt[match(V(g.sub.prout.mcns)$name, nt_values$type)]
 
 
 fru_dsx_for_vertices <- fru_dsx_values$fru[match(V(g.sub.prout.mcns)$name, fru_dsx_values$type)]
 
-
+V(g.sub.prout.mcns)$level <- lvl_for_vertices
 V(g.sub.prout.mcns)$nt <- nt_for_vertices
 V(g.sub.prout.mcns)$fru_dsx <- fru_dsx_for_vertices
 
@@ -568,20 +722,25 @@ is_p1p1 <- grepl("^P1_", el[, 1])# & grepl("^P1_", el[, 2])
 E(g.sub.prout.mcns)$is_p1_p1 <- is_p1p1
 
 rename_dict <- list(
-  "CB1078" = "aPN1_CB1078",
-  "CB1542" = "aPN1_CB1542",
-  "CB3382" = "aIP-g_CB3382",
-  "CB2364" = "aSP-K_CB2364",
-  'AVLP721m' = 'vPN1_AVLP721m',
-  "AVLP299_c" = "aIP-b_AVLP299_c",
-  "SIP114m" = "aSP-a_SIP114m",
-  'SIP116m' = 'aSP-a_SIP116m',
-  "SIP120m" = "aSP-a_SIP120m",
-  "PVLP211m" = "pIP-e_PVLP211m",
-  'AVLP744m' = 'pIP-e_AVLP744m',
-  'SIP108m'='pIP-e_SIP108m',
-  'AVLP711m'='pIP-e_AVLP711m',
-  'CB1385' = 'vpoIN_CB1385'
+  "CB1078" = "aPN1/CB1078",
+  "CB1542" = "aPN1/CB1542",
+  "CB3382" = "aIP-g/CB3382",
+  "CB2364" = "aSP-K/CB2364",
+  'AVLP721m' = 'vPN1/AVLP721m',
+  "AVLP299_c" = "aIP-b/AVLP299_c",
+  "SIP114m" = "aSP-a/SIP114m",
+  'SIP116m' = 'aSP-a/SIP116m',
+  "SIP120m" = "aSP-a/SIP120m",
+  "PVLP211m" = "pIP-e/PVLP211m",
+  'AVLP744m' = 'pIP-e/AVLP744m',
+  'SIP108m'='pIP-e/SIP108m',
+  'AVLP711m'='pIP-e/AVLP711m',
+  'CB1385' = 'vpoIN_CB1385',
+  'AVLP755m'='AVLP755m/aSP-k/aSP8/LC1',
+  'LHAV4c2'='LHAV4c2/aSP-k/aSP8/LC1',
+  'AVLP734m'='AVLP734m/aSP-k/aSP8/LC1',
+  'ICL008m'='ICL008m/aSP-k/aSP8/LC1',
+  'AVLP760m'='AVLP760m/aSP-k/aSP8/LC1'
   
 )
 
@@ -593,6 +752,25 @@ V(g.sub.prout.mcns)$name <- sapply(V(g.sub.prout.mcns)$name, function(x) ifelse(
 
 
 RCy3::createNetworkFromIgraph(g.sub.prout.mcns)
+
+
+```
+Minimum graph
+```{r}
+g.reduced <- simplify(
+  g.sub.prout.mcns,
+  remove.multiple = TRUE,
+  remove.loops = TRUE,
+  edge.attr.comb = list(pre_normed_weight = "max",
+                        level = "min",
+                        log_weight = "max",
+                        is_p1_p1 = "first",
+                        inv_weights = "min")  # Keep max weight if duplicates exist
+)
+
+
+
+RCy3::createNetworkFromIgraph(g.reduced)
 
 
 ```
