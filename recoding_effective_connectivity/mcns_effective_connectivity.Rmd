@@ -28,7 +28,11 @@ mba.type.coalesced <-  mba %>%
                          flywire_type, 
                          hemibrain_type, 
                          manc_type),
-         top_nt=coalesce(consensus_nt,celltype_predicted_nt,predicted_nt))
+         top_nt=coalesce(consensus_nt,celltype_predicted_nt,predicted_nt))%>%
+  mutate(type = ifelse(grepl("Vaughan 2014: aPN1", synonyms),'aPN1',type))
+
+
+
 #flytable<-flytable_query("select * from info",limit=1000) #this throws an error right now?
 mba_synonyms <- mba%>%
   select(bodyid,type,flywire_type,synonyms)%>%
@@ -432,6 +436,7 @@ try(all.levels.prout.mcns.output <- all.levels.prout.mcns.output %>%
 
 Complete adjacency matrix
 ```{r}
+library(Matrix)
 path = "/Users/fkampf/Downloads/snapshots_2025-02-11-a4c0d9-unlocked_flat-connectome_connectome-weights-2025-02-11-a4c0d9-unlocked-minconf-0.5-primary-only.feather"
 flat.connectome.feather <- arrow::open_dataset(path, format = "feather")
 flat.connectome.df.0 <- flat.connectome.feather %>%
@@ -449,28 +454,179 @@ type2id.dict.1 <- flat.connectome.df.0%>%
   distinct()%>%
   rename(body=body_post,type=type_post)
 
-type2id.dict.final <- rbind(body2id_map.1,body2id_map.0)%>%distinct()
+type2id.dict.final <- rbind(type2id.dict.0,type2id.dict.1)%>%
+  distinct()%>%
+  mutate(type=ifelse(is.na(type),'NA',type))%>%
+  left_join(mba.type.coalesced%>%
+              select(bodyid,type)%>%
+              mutate(bodyid=as.character(bodyid))%>%
+              rename(mba_type=type),
+            by=c('body'='bodyid'))%>%
+  mutate(type=coalesce(mba_type,type))%>%
+  select(-mba_type)
+  
+
 
 unique_body <- union(flat.connectome.df.0$body_pre, flat.connectome.df.0$body_post)
 
 id2type.map <- type2id.dict.final$type[match(unique_body, type2id.dict.final$body)]
+id2type.map[is.na(id2type.map)]='NA'
 
 adj_matrix_full <- sparseMatrix(
   i = match(flat.connectome.df.0$body_pre, unique_body),
   j = match(flat.connectome.df.0$body_post, unique_body),
-  x = flat.connectome.df.0$weight,  # or use edge_df$syn_count or other weight column if available
+  x = flat.connectome.df.0$weight,
   dims = c(length(unique_body), length(unique_body)),
   dimnames = list(unique_body, unique_body)
 )
+
+adj_matrix_full_type <- sparseMatrix(
+  i = match(flat.connectome.df.0$body_pre, unique_body),
+  j = match(flat.connectome.df.0$body_post, unique_body),
+  x = flat.connectome.df.0$weight,
+  dims = c(length(unique_body), length(unique_body)),
+  dimnames = list(id2type.map, id2type.map)
+)
+
+
 ```
 
 #Reconstruct circuit using the full adjacency matrix
 ```{r}
-indices <- which(id2type.map == "(JO-B)")
-sub_mat <- adj_matrix_full[indices, , drop = FALSE]  # retain sparse structure
+input_type = "(JO-B)"
+input_ids <- type2id.dict.final%>%filter(type==input_type)%>%pull(body)
+collected_types <- c(input_type)
 
-# For a dgCMatrix, diff(sub_mat@p) gives the number of nonzeros per column.
-nonzero_cols <- which(diff(sub_mat@p) > 0)
+
+#level 0
+indices <- which(id2type.map == input_type)
+sub_mat <- adj_matrix_full[indices, , drop = FALSE]
+indices_nonzero <- which(diff(sub_mat@p) > 0)
+lvl0.ids <- colnames(sub_mat[,indices_nonzero])
+lvl0.ids <- lvl0.ids[!type2id.dict.final$type[match(lvl0.ids, type2id.dict.final$body)] %in% collected_types]%>%unique()
+lvl0.types <- type2id.dict.final$type[match(lvl0.ids, type2id.dict.final$body)]
+collected_types <- c(collected_types,lvl0.types)
+
+#level1
+sub_mat <- adj_matrix_full[lvl0.ids, , drop = FALSE]
+indices_nonzero <- which(diff(sub_mat@p) > 0)
+lvl1.ids <- colnames(sub_mat[,indices_nonzero])
+lvl1.ids <- lvl1.ids[!type2id.dict.final$type[match(lvl1.ids, type2id.dict.final$body)] %in% collected_types]%>%unique()
+lvl1.types <- type2id.dict.final$type[match(lvl1.ids, type2id.dict.final$body)]
+collected_types <- c(collected_types,lvl1.types)
+
+
+#level2
+sub_mat <- adj_matrix_full[lvl1.ids, , drop = FALSE]
+indices_nonzero <- which(diff(sub_mat@p) > 0)
+lvl2.ids <- colnames(sub_mat[,indices_nonzero])
+lvl2.ids <- lvl2.ids[!type2id.dict.final$type[match(lvl2.ids, type2id.dict.final$body)] %in% collected_types]%>%unique()
+lvl2.types <- type2id.dict.final$type[match(lvl2.ids, type2id.dict.final$body)]
+collected_types <- c(collected_types,lvl2.types)
+
+
+#level3
+sub_mat <- adj_matrix_full[lvl2.ids, , drop = FALSE]
+indices_nonzero <- which(diff(sub_mat@p) > 0)
+lvl3.ids <- colnames(sub_mat[,indices_nonzero])
+lvl3.ids <- lvl3.ids[!type2id.dict.final$type[match(lvl3.ids, type2id.dict.final$body)] %in% collected_types]%>%unique()
+lvl3.types <- type2id.dict.final$type[match(lvl3.ids, type2id.dict.final$body)]
+collected_types <- c(collected_types,lvl3.types)
+
+#level4
+sub_mat <- adj_matrix_full[lvl3.ids, , drop = FALSE]
+indices_nonzero <- which(diff(sub_mat@p) > 0)
+lvl4.ids <- colnames(sub_mat[,indices_nonzero])
+lvl4.ids <- lvl4.ids[!type2id.dict.final$type[match(lvl4.ids, type2id.dict.final$body)] %in% collected_types]%>%unique()
+lvl4.types <- type2id.dict.final$type[match(lvl4.ids, type2id.dict.final$body)]
+
+
+collected_types <- c(collected_types,lvl4.types)
+collected_ids <- c(input_ids,lvl0.ids,lvl1.ids,lvl2.ids,lvl3.ids,lvl4.ids)%>%unique()
+```
+
+
+
+
+Norm adjacency matrix
+
+```{r}
+norm.by = 'post' #'post'
+
+colScale <- function(A, na.rm = TRUE) {
+  scalefac <- 1 / Matrix::colSums(A)
+  if (na.rm) scalefac[!is.finite(scalefac)] <- 0
+  B <- A %*% Matrix::Diagonal(x = scalefac)
+  B
+  
+}
+
+rowScale <- function(A, na.rm = TRUE) {
+  scalefac <- 1 / Matrix::rowSums(A)
+  if (na.rm) scalefac[!is.finite(scalefac)] <- 0
+  B <- Matrix::Diagonal(x = scalefac) %*% A
+  B
+}
+if (norm.by=='pre'){
+  
+  adj.matrix.normed.cell <- rowScale(adj_matrix_full)
+  colnames(adj.matrix.normed.cell) <- colnames(adj_matrix_full)
+  rownames(adj.matrix.normed.cell) <- rownames(adj_matrix_full)
+
+  
+  row_groups <- factor(type2id.dict.final$type[match(rownames(adj_matrix_full),type2id.dict.final$body)])
+  col_groups <- factor(type2id.dict.final$type[match(colnames(adj_matrix_full),type2id.dict.final$body)])
+  
+  M <- sparseMatrix(
+  i = seq_along(rownames(adj_matrix_full)),
+  j = as.numeric(row_groups),
+  x = 1,
+  dims = c(length(rownames(adj_matrix_full)), nlevels(row_groups)))
+
+  adj_matrix_full_type <- t(M) %*% adj.matrix.pruned %*% M_col
+  rownames(adj_matrix_full_type) <- levels(row_groups)
+  colnames(adj_matrix_full_type) <- levels(col_groups)
+  
+  adj.matrix.normed.type <- rowScale(adj_matrix_full_type)
+  rownames(adj.matrix.normed.type) <- rownames(adj_matrix_full_type)
+  colnames(adj.matrix.normed.type) <- colnames(adj_matrix_full_type)
+
+  
+} else if(norm.by=='post'){
+  adj.matrix.normed.cell <- colScale(adj_matrix_full)
+  colnames(adj.matrix.normed.cell) <- colnames(adj_matrix_full)
+  rownames(adj.matrix.normed.cell) <- rownames(adj_matrix_full)
+
+  
+  row_groups <- factor(type2id.dict.final$type[match(rownames(adj_matrix_full),type2id.dict.final$body)])
+  col_groups <- factor(type2id.dict.final$type[match(colnames(adj_matrix_full),type2id.dict.final$body)])
+  
+  M <- sparseMatrix(
+  i = seq_along(rownames(adj_matrix_full)),
+  j = as.numeric(row_groups),
+  x = 1,
+  dims = c(length(rownames(adj_matrix_full)), nlevels(row_groups)))
+
+  adj_matrix_full_type <- t(M) %*% adj.matrix.pruned %*% M_col
+  rownames(adj_matrix_full_type) <- levels(row_groups)
+  colnames(adj_matrix_full_type) <- levels(col_groups)
+  
+  adj.matrix.normed.type <- colScale(adj_matrix_full_type)
+  rownames(adj.matrix.normed.type) <- rownames(adj_matrix_full_type)
+  colnames(adj.matrix.normed.type) <- colnames(adj_matrix_full_type)
+
+  
+    
+}
+adj_matrix_thresholded<- adj.matrix.normed.type
+adj_matrix_thresholded<-adj_matrix_thresholded[rownames(adj_matrix_thresholded)!='NA',colnames(adj_matrix_thresholded)!='NA']
+adj_matrix_thresholded[adj_matrix_thresholded < 0.01] <- 0
+g.prout.mcns <- graph_from_adjacency_matrix(
+  adj_matrix_thresholded,
+  mode = "directed",
+  weighted = TRUE,
+  diag = FALSE
+)
 
 
 ```
@@ -550,7 +706,7 @@ path finding new
 ```{r}
 
 # Define parameters for path search
-n_paths <- 3           # Number of strongest paths to find for each start-target pair
+n_paths <- 1          # Number of strongest paths to find for each start-target pair
 diversity <- 'othernodes'  # othernodes,otheredges,none
 
 
@@ -684,6 +840,47 @@ print(results_df_wo_na)
 
 
 
+```{r}
+nodes_to_keep <- c("JO-B","JO-B",'CB1078','CB1542','CB2108','CB1383','CB1066,CB3649
+','CB2364','CB3382','PVLP033','CB3162','CB3382','vpoEN',
+'AVLP721m','AVLP299_c','DNp55','CB1385','AVLP711m','SIP108m','SIP120m','SIP116m','SIP114m','PVLP211m','pMP2','AVLP744m')
+nodes_to_keep <- c(nodes_to_keep,unique(all_important_nodes))
+g.sub.prout.mcns <- induced_subgraph(g.prout.mcns, vids = V(g.prout.mcns)[name %in% nodes_to_keep])
+node_names <- V(g.sub.prout.mcns)$name
+distance_to_JO_B <- shortest.paths(g.sub.prout.mcns, to = V(g.sub.prout.mcns)[name == "(JO-B)_NA"], weights = NA)
+distance_to_JO_B <- shortest.paths(g.sub.prout.mcns, to = V(g.sub.prout.mcns)[name == "(JO-B)"], weights = NA)
+rename_dict <- list(
+  "CB1078" = "aPN1/CB1078",
+  "CB1542" = "aPN1/CB1542",
+  "CB3382" = "aIP-g/CB3382",
+  "CB2364" = "aSP-K/CB2364",
+  'AVLP721m' = 'vPN1/AVLP721m',
+  "AVLP299_c" = "aIP-b/AVLP299_c",
+  "SIP114m" = "aSP-a/SIP114m",
+  'SIP116m' = 'aSP-a/SIP116m',
+  "SIP120m" = "aSP-a/SIP120m",
+  "PVLP211m" = "pIP-e/PVLP211m",
+  'AVLP744m' = 'pIP-e/AVLP744m',
+  'SIP108m'='pIP-e/SIP108m',
+  'AVLP711m'='pIP-e/AVLP711m',
+  'CB1385' = 'vpoIN_CB1385',
+  'AVLP755m'='AVLP755m/aSP-k/aSP8/LC1',
+  'LHAV4c2'='LHAV4c2/aSP-k/aSP8/LC1',
+  'AVLP734m'='AVLP734m/aSP-k/aSP8/LC1',
+  'ICL008m'='ICL008m/aSP-k/aSP8/LC1',
+  'AVLP760m'='AVLP760m/aSP-k/aSP8/LC1'
+  
+)
+
+
+# Apply the dictionary to rename the vertices in the graph
+V(g.sub.prout.mcns)$name <- sapply(V(g.sub.prout.mcns)$name, function(x) ifelse(x %in% names(rename_dict), rename_dict[[x]], x))
+V(g.sub.prout.mcns)$distance_to_JO_B <- ifelse(node_names == "(JO-B)", 0, as.integer(distance_to_JO_B))
+
+RCy3::createNetworkFromIgraph(g.sub.prout.mcns)
+
+
+```
 
 
 Open graph in RCy3
@@ -694,9 +891,10 @@ library(dplyr)
 
 
 nodes_to_keep <- c("JO-B","JO-B",'CB1078','CB1542','CB2108','CB1383','CB1066,CB3649
-','CB2364','CB3382','PVLP033','CB3162','CB3382','vpoEN',V(g.prout.mcns)$name[grepl("P1_", V(g.prout.mcns)$name)],
+','CB2364','CB3382','PVLP033','CB3162','CB3382','vpoEN','SIP124m',
 'AVLP721m','AVLP299_c','DNp55','CB1385','AVLP711m','SIP108m','SIP120m','SIP116m','SIP114m','PVLP211m','pMP2','AVLP744m')
-nodes_to_keep <- unique(all_important_nodes)
+nodes_to_keep <- c(nodes_to_keep,unique(all_important_nodes))
+nodes_to_keep <-unique(all_important_nodes)
 
 #add P1 only to neurons which would be in the graph anyway
 P1_2_add <- all.levels.prout.mcns.output%>%
@@ -708,6 +906,7 @@ P1_2_add <- all.levels.prout.mcns.output%>%
 #nodes_to_keep<-c(nodes_to_keep,P1_2_add)
 
 #cleaning up graph and subsampling
+
 g.sub.prout.mcns <- induced_subgraph(g.prout.mcns, vids = V(g.prout.mcns)[name %in% nodes_to_keep])
 
 
