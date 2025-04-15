@@ -430,6 +430,55 @@ try(all.levels.prout.mcns.output <- all.levels.prout.mcns.output %>%
 
 ```
 
+Complete adjacency matrix
+```{r}
+path = "/Users/fkampf/Downloads/snapshots_2025-02-11-a4c0d9-unlocked_flat-connectome_connectome-weights-2025-02-11-a4c0d9-unlocked-minconf-0.5-primary-only.feather"
+flat.connectome.feather <- arrow::open_dataset(path, format = "feather")
+flat.connectome.df.0 <- flat.connectome.feather %>%
+    collect() %>%
+    data.frame()%>%
+    mutate(body_pre=as.character(body_pre),body_post=as.character(body_post))
+
+type2id.dict.0 <- flat.connectome.df.0%>%
+  select(body_pre,type_pre)%>%
+  distinct()%>%
+  rename(body=body_pre,type=type_pre)
+
+type2id.dict.1 <- flat.connectome.df.0%>%
+  select(body_post,type_post)%>%
+  distinct()%>%
+  rename(body=body_post,type=type_post)
+
+type2id.dict.final <- rbind(body2id_map.1,body2id_map.0)%>%distinct()
+
+unique_body <- union(flat.connectome.df.0$body_pre, flat.connectome.df.0$body_post)
+
+id2type.map <- type2id.dict.final$type[match(unique_body, type2id.dict.final$body)]
+
+adj_matrix_full <- sparseMatrix(
+  i = match(flat.connectome.df.0$body_pre, unique_body),
+  j = match(flat.connectome.df.0$body_post, unique_body),
+  x = flat.connectome.df.0$weight,  # or use edge_df$syn_count or other weight column if available
+  dims = c(length(unique_body), length(unique_body)),
+  dimnames = list(unique_body, unique_body)
+)
+```
+
+#Reconstruct circuit using the full adjacency matrix
+```{r}
+indices <- which(id2type.map == "(JO-B)")
+sub_mat <- adj_matrix_full[indices, , drop = FALSE]  # retain sparse structure
+
+# For a dgCMatrix, diff(sub_mat@p) gives the number of nonzeros per column.
+nonzero_cols <- which(diff(sub_mat@p) > 0)
+
+
+```
+
+
+
+
+
 Adjacency shenanigans
 ```{r}
 
