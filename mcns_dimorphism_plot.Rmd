@@ -1,0 +1,148 @@
+---
+title: Exploring Dimorphic Connections of Key Neurons in the Male Drosophila Auditory
+  Pathway
+author: "Florian Kämpf"
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: '2'
+  html_document:
+    toc: true
+    toc_depth: 2
+abstract: "This R Markdown document provides an in-depth exploratory analysis of key
+  neuronal inputs and outputs within the male Drosophila auditory pathway. \nThe analysis
+  emphasizes the examination of synaptic connections, focusing in particular on the
+  proportion directed onto dimorphic/sex-specific neurons.\n"
+tags:
+- Drosophila
+- Auditory
+- Neuroscience
+- Synaptic Connectivity
+- Dimorphic Neurons
+---
+## Import 
+
+```{r}
+library(malecns)
+library(coconatfly)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(plotly)
+library(stringr)
+library(igraph)
+library(fafbseg)
+library(tidygraph)
+library(ggraph)
+library(jsonlite)
+```
+
+
+## Load important stuff
+```{r}
+mba<-mcns_body_annotations()%>%
+  mutate(dimorphism=factor(replace_na(dimorphism,'NA')),
+         fru_dsx=factor(replace_na(fru_dsx,'NA')))
+```
+
+## Define Key Neuron IDs
+```{r}
+vPN1.ids <- mba %>% filter(grepl('aPN1',synonyms)) %>% pull (bodyid)
+aPN1.ids <- mba %>% filter(grepl('vPN1',synonyms)) %>% pull (bodyid)
+vpoEN.ids <- mba %>% filter(grepl('vpoEN',type)) %>% pull (bodyid)
+vpoIN.ids <- mba %>% filter(grepl('vpoIN',type)) %>% pull (bodyid)
+pIP10.ids <- mba %>% filter(grepl('pIP10',type)) %>% pull (bodyid)
+pMP2.ids <- mba %>% filter(grepl('pMP2',type)) %>% pull (bodyid)
+```
+
+## Pull Hemilineage 
+```{r}
+vPN1.itolee_hl <- mba %>% filter(bodyid %in% vPN1.ids) %>% pull (itolee_hl) %>% unique()
+aPN1.itolee_hl <- mba %>% filter(bodyid %in% vPN1.ids) %>% pull (itolee_hl) %>% unique()
+vpoEN.itolee_hl <- mba %>% filter(bodyid %in% vPN1.ids) %>% pull (itolee_hl) %>% unique()
+vpoIN.itolee_hl <- mba %>% filter(bodyid %in% vPN1.ids) %>% pull (itolee_hl) %>% unique()
+pIP10.itolee_hl <- mba %>% filter(bodyid %in% vPN1.ids) %>% pull (itolee_hl) %>% unique()
+pMP2.itolee_hl <- mba %>% filter(bodyid %in% vPN1.ids) %>% pull (itolee_hl) %>% unique()
+```
+
+## Function to calculate dimorphic input
+```{r}
+
+
+calculate_dimorphism_contribution<- function(ids,
+                             partners='i',
+                             norm = 'neuron',
+                             splitter = 'fru_dsx',
+                             mean_it = T){
+aaa<- cf_partners(cf_ids(malecns=ids),partners=partners,threshold=5)%>%
+  left_join(mba%>%
+              select(bodyid,
+                     fru_dsx,
+                     dimorphism),
+            by=c('partner'='bodyid'))%>%
+  mutate(partner_in_out='in')
+
+if (norm == 'neuron'){
+aaa_syn <- aaa %>% 
+  group_by(bodyid) %>%
+  summarise(total_weight=sum(weight))
+aaa <- aaa %>%left_join(aaa_syn,by='bodyid')
+
+aaa_syn_sub <- aaa%>%
+  group_by(across(all_of(c('bodyid',splitter))))%>%
+  summarise(
+    total_weight=first(total_weight),
+    sub_weight=sum(weight),
+    .groups = "drop"
+    )%>%
+  mutate(fraction_weight=sub_weight/total_weight)%>%
+  ungroup()%>%
+  pivot_wider(
+    id_cols = bodyid,
+    names_from = splitter, 
+    values_from = fraction_weight,
+    values_fn = list(fraction_weight = first)
+    )%>%
+  mutate(
+    across(everything(), ~replace_na(.x, 0))
+  )
+if (mean_it){
+  aaa_syn_sub_mean <-colMeans(aaa_syn_sub)
+aaa_syn_sub_mean<- aaa_syn_sub_mean[2:length(aaa_syn_sub_mean)]
+  return(aaa_syn_sub_mean)
+}else{
+  return(aaa_syn_sub)
+}
+
+
+
+}
+}
+a <-calculate_dimorphism_contribution(vpoEN.ids,mean_it = T)
+
+```
+
+
+
+
+```{r}
+bbb<- cf_partners(cf_ids(malecns=vPN1.ids),partners='o',threshold=5)%>%
+  left_join(mba%>%
+              select(bodyid,
+                     fru_dsx,
+                     dimorphism),
+            by=c('partner'='bodyid'))%>%
+  mutate(partner_in_out='out')
+bbb_syn <- bbb %>% 
+  group_by(bodyid) %>%
+  summarise(total_weight=sum(weight))
+
+bbb <- bbb %>%left_join(bbb_syn,by='bodyid')
+
+
+
+ccc <- rbind(aaa,bbb)
+```
+
+
