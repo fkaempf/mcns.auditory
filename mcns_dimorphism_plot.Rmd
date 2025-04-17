@@ -1,148 +1,261 @@
 ---
-title: Exploring Dimorphic Connections of Key Neurons in the Male Drosophila Auditory
-  Pathway
+title: "Exploring Dimorphic Connections of Key Neurons in the Male Drosophila Auditory Pathway"
 author: "Florian Kämpf"
 date: "`r format(Sys.Date(), '%Y-%m-%d')`"
 output:
   pdf_document:
     toc: true
-    toc_depth: '2'
+    toc_depth: 2
   html_document:
     toc: true
     toc_depth: 2
-abstract: "This R Markdown document provides an in-depth exploratory analysis of key
-  neuronal inputs and outputs within the male Drosophila auditory pathway. \nThe analysis
-  emphasizes the examination of synaptic connections, focusing in particular on the
-  proportion directed onto dimorphic/sex-specific neurons.\n"
+abstract: |
+  This R Markdown document provides an in-depth exploratory analysis of key
+  neuronal inputs and outputs within the male Drosophila auditory pathway.
+  The analysis emphasizes the examination of synaptic connections,
+  focusing in particular on the proportion directed onto dimorphic/sex-specific neurons.
 tags:
-- Drosophila
-- Auditory
-- Neuroscience
-- Synaptic Connectivity
-- Dimorphic Neurons
+  - Drosophila
+  - Auditory
+  - Neuroscience
+  - Synaptic Connectivity
+  - Dimorphic Neurons
 ---
-## Import 
 
-```{r}
-library(malecns)
-library(coconatfly)
-library(dplyr)
-library(tidyr)
-library(ggplot2)
-library(plotly)
-library(stringr)
-library(igraph)
-library(fafbseg)
-library(tidygraph)
-library(ggraph)
-library(jsonlite)
+```{r setup, include=FALSE}
+# Setup knitr global options for clean rendering and consistent figures
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = 'center',
+  fig.width = 8,
+  fig.height = 6
+)
 ```
 
-
-## Load important stuff
-```{r}
-mba<-mcns_body_annotations()%>%
-  mutate(dimorphism=factor(replace_na(dimorphism,'NA')),
-         fru_dsx=factor(replace_na(fru_dsx,'NA')))
+## 1. Import
+```{r import}
+# Load required libraries for connectome analysis, data wrangling, and plotting
+library(malecns)       # male CNS annotations
+library(coconatfly)    # connectomics functions
+library(dplyr)         # data manipulation
+library(tidyr)         # data reshaping
+library(ggplot2)       # static plotting
+library(plotly)        # interactive plots
+library(stringr)       # string operations
+library(igraph)        # graph analysis
+library(fafbseg)       # segmentation utilities
+library(tidygraph)     # tidy graph operations
+library(ggraph)        # graph plotting
+library(jsonlite)      # JSON parsing
 ```
 
-## Define Key Neuron IDs
-```{r}
-vPN1.ids <- mba %>% filter(grepl('aPN1',synonyms)) %>% pull (bodyid)
-aPN1.ids <- mba %>% filter(grepl('vPN1',synonyms)) %>% pull (bodyid)
-vpoEN.ids <- mba %>% filter(grepl('vpoEN',type)) %>% pull (bodyid)
-vpoIN.ids <- mba %>% filter(grepl('vpoIN',type)) %>% pull (bodyid)
-pIP10.ids <- mba %>% filter(grepl('pIP10',type)) %>% pull (bodyid)
-pMP2.ids <- mba %>% filter(grepl('pMP2',type)) %>% pull (bodyid)
-```
-
-## Pull Hemilineage 
-```{r}
-vPN1.itolee_hl <- mba %>% filter(bodyid %in% vPN1.ids) %>% pull (itolee_hl) %>% unique()
-aPN1.itolee_hl <- mba %>% filter(bodyid %in% vPN1.ids) %>% pull (itolee_hl) %>% unique()
-vpoEN.itolee_hl <- mba %>% filter(bodyid %in% vPN1.ids) %>% pull (itolee_hl) %>% unique()
-vpoIN.itolee_hl <- mba %>% filter(bodyid %in% vPN1.ids) %>% pull (itolee_hl) %>% unique()
-pIP10.itolee_hl <- mba %>% filter(bodyid %in% vPN1.ids) %>% pull (itolee_hl) %>% unique()
-pMP2.itolee_hl <- mba %>% filter(bodyid %in% vPN1.ids) %>% pull (itolee_hl) %>% unique()
-```
-
-## Function to calculate dimorphic input
-```{r}
-
-
-calculate_dimorphism_contribution<- function(ids,
-                             partners='i',
-                             norm = 'neuron',
-                             splitter = 'fru_dsx',
-                             mean_it = T){
-aaa<- cf_partners(cf_ids(malecns=ids),partners=partners,threshold=5)%>%
-  left_join(mba%>%
-              select(bodyid,
-                     fru_dsx,
-                     dimorphism),
-            by=c('partner'='bodyid'))%>%
-  mutate(partner_in_out='in')
-
-if (norm == 'neuron'){
-aaa_syn <- aaa %>% 
-  group_by(bodyid) %>%
-  summarise(total_weight=sum(weight))
-aaa <- aaa %>%left_join(aaa_syn,by='bodyid')
-
-aaa_syn_sub <- aaa%>%
-  group_by(across(all_of(c('bodyid',splitter))))%>%
-  summarise(
-    total_weight=first(total_weight),
-    sub_weight=sum(weight),
-    .groups = "drop"
-    )%>%
-  mutate(fraction_weight=sub_weight/total_weight)%>%
-  ungroup()%>%
-  pivot_wider(
-    id_cols = bodyid,
-    names_from = splitter, 
-    values_from = fraction_weight,
-    values_fn = list(fraction_weight = first)
-    )%>%
+## 2. Load Important Data
+```{r load-data}
+# Retrieve body annotations and handle missing factor levels
+mba <- mcns_body_annotations() %>%
   mutate(
-    across(everything(), ~replace_na(.x, 0))
+    dimorphism = factor(replace_na(dimorphism, 'NA')),
+    fru_dsx    = factor(replace_na(fru_dsx, 'NA'))
   )
-if (mean_it){
-  aaa_syn_sub_mean <-colMeans(aaa_syn_sub)
-aaa_syn_sub_mean<- aaa_syn_sub_mean[2:length(aaa_syn_sub_mean)]
-  return(aaa_syn_sub_mean)
-}else{
-  return(aaa_syn_sub)
-}
-
-
-
-}
-}
-a <-calculate_dimorphism_contribution(vpoEN.ids,mean_it = T)
-
 ```
 
-
-
-
-```{r}
-bbb<- cf_partners(cf_ids(malecns=vPN1.ids),partners='o',threshold=5)%>%
-  left_join(mba%>%
-              select(bodyid,
-                     fru_dsx,
-                     dimorphism),
-            by=c('partner'='bodyid'))%>%
-  mutate(partner_in_out='out')
-bbb_syn <- bbb %>% 
-  group_by(bodyid) %>%
-  summarise(total_weight=sum(weight))
-
-bbb <- bbb %>%left_join(bbb_syn,by='bodyid')
-
-
-
-ccc <- rbind(aaa,bbb)
+## 3. Define Key Neuron IDs
+```{r define-ids}
+# Identify neuron body IDs by synonyms or type labels
+vPN1.ids  <- mba %>% filter(str_detect(synonyms, 'aPN1')) %>% pull(bodyid)
+aPN1.ids  <- mba %>% filter(str_detect(synonyms, 'vPN1')) %>% pull(bodyid)
+vpoEN.ids <- mba %>% filter(str_detect(type, 'vpoEN'))    %>% pull(bodyid)
+vpoIN.ids <- mba %>% filter(str_detect(type, 'vpoIN'))    %>% pull(bodyid)
+pIP10.ids <- mba %>% filter(str_detect(type, 'pIP10'))    %>% pull(bodyid)
+pMP2.ids  <- mba %>% filter(str_detect(type, 'pMP2'))     %>% pull(bodyid)
+all.ids   <- list(vPN1.ids, aPN1.ids, vpoIN.ids, vpoEN.ids, pIP10.ids, pMP2.ids)
+all.names <- c('vPN1','aPN1','vpoIN','vpoEN','pIP10','pMP2')
 ```
 
+## 4. Pull Hemilineage Information
+```{r hemilineage}
+# Extract unique hemilineage annotations for each neuron group
+vPN1.itolee_hl  <- mba %>% filter(bodyid %in% vPN1.ids)  %>% pull(itolee_hl) %>% unique()
+aPN1.itolee_hl  <- mba %>% filter(bodyid %in% aPN1.ids)  %>% pull(itolee_hl) %>% unique()
+vpoEN.itolee_hl <- mba %>% filter(bodyid %in% vpoEN.ids) %>% pull(itolee_hl) %>% unique()
+vpoIN.itolee_hl <- mba %>% filter(bodyid %in% vpoIN.ids) %>% pull(itolee_hl) %>% unique()
+pIP10.itolee_hl <- mba %>% filter(bodyid %in% pIP10.ids) %>% pull(itolee_hl) %>% unique()
+pMP2.itolee_hl  <- mba %>% filter(bodyid %in% pMP2.ids)  %>% pull(itolee_hl) %>% unique()
+```
+
+## 5. Function: Calculate Dimorphic Input
+```{r calculate-dimorphism}
+# Compute contributions of dimorphic categories for partners of given IDs
+calculate_dimorphism_contribution <- function(
+  ids,
+  partners = 'i',    # 'i' for inputs, 'o' for outputs
+  norm     = 'neuron',
+  splitter = 'fru_dsx',
+  mean_it  = TRUE
+) {
+  # Retrieve synaptic partners above threshold
+  aaa <- cf_partners(cf_ids(malecns = ids), partners = partners, threshold = 5) %>%
+    left_join(mba %>% select(bodyid, fru_dsx, dimorphism), by = c('partner' = 'bodyid')) %>%
+    mutate(partner_in_out = partners)
+
+  if (norm == 'neuron') {
+    # Compute per-neuron total weight
+    aaa_syn <- aaa %>% group_by(bodyid) %>% summarise(total_weight = sum(weight))
+    aaa <- aaa %>% left_join(aaa_syn, by = 'bodyid')
+
+    # Summarize by splitter category and compute fraction
+    aaa_syn_sub <- aaa %>%
+      group_by(across(all_of(c('bodyid', splitter)))) %>%
+      summarise(
+        total_weight = first(total_weight),
+        sub_weight   = sum(weight),
+        .groups      = 'drop'
+      ) %>%
+      mutate(fraction_weight = sub_weight / total_weight) %>%
+      pivot_wider(
+        id_cols     = bodyid,
+        names_from  = splitter,
+        values_from = fraction_weight,
+        values_fn   = list(fraction_weight = first)
+      ) %>%
+      mutate(across(everything(), ~replace_na(.x, 0)))
+
+    # Return mean fraction per category or full table
+    if (mean_it) {
+      vals <- colMeans(aaa_syn_sub)
+      return(vals[2:length(vals)])
+    } else {
+      return(aaa_syn_sub)
+    }
+  }
+}
+```
+
+## 6. Build Data Frame for `fru_dsx`
+```{r create-fru-df}
+# Initialize empty dataframe with columns for each fru_dsx level + metadata
+fru_dsx_fraction_df <- data.frame(matrix(ncol = length(levels(mba$fru_dsx)) + 2, nrow = 0))
+colnames(fru_dsx_fraction_df) <- c(levels(mba$fru_dsx), 'type', 'partners')
+fru_dsx_fraction_df$type     <- character()
+fru_dsx_fraction_df$partners <- character()
+
+# Iterate over input/output and neuron types, computing fractions
+for (partner in c('i','o')) {
+  for (i in seq_along(all.ids)) {
+    a <- calculate_dimorphism_contribution(all.ids[[i]], partners = partner, mean_it = FALSE)
+    a$type     <- all.names[i]
+    a$partners <- partner
+    fru_dsx_fraction_df <- bind_rows(fru_dsx_fraction_df, a) %>%
+      mutate(across(everything(), ~replace_na(., 0)))
+  }
+}
+```
+
+## 7. Plot `fru_dsx` (Stacked & Normalized)
+```{r plot-fru-stacked}
+# Reshape to long format for plotting
+fru_dsx_long <- fru_dsx_fraction_df %>%
+  pivot_longer(cols = c(coexpress_high, coexpress_low, dsx_high, dsx_low, fru_high, fru_low, `NA`),
+               names_to = 'category', values_to = 'fraction')
+
+# Summarize and normalize fractions per group
+group_sums <- fru_dsx_long %>%
+  group_by(type, partners, category) %>%
+  summarise(total = sum(fraction, na.rm = TRUE), .groups = 'drop')
+
+normalized_group <- group_sums %>%
+  group_by(type, partners) %>%
+  mutate(norm_fraction = total / sum(total)) %>%
+  ungroup() %>%
+  mutate(type_partners = paste(type, partners, sep = '_'),
+         type_partners = factor(type_partners,
+           levels = c('aPN1_i','aPN1_o','vPN1_i','vPN1_o','vpoEN_i','vpoEN_o','vpoIN_i','vpoIN_o','pMP2_i','pMP2_o','pIP10_i','pIP10_o')
+         ))
+
+# Create stacked bar chart
+ggplot(normalized_group, aes(x = type_partners, y = norm_fraction, fill = category)) +
+  geom_bar(stat = 'identity') +
+  theme_minimal(base_size = 14) +
+  labs(title = 'Normalized Expression by Neuron Type and pre/post partner',
+       x = 'Neuron Type & Partner', y = 'Relative Contribution (Sums to 1)', fill = 'Category') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## 8. Plot `fru_dsx2` (Mean ± SD)
+```{r plot-fru-errorbars}
+# Compute mean and standard deviation per category
+dataset_summary <- fru_dsx_long %>%
+  group_by(type, partners, category) %>%
+  summarise(mean = mean(fraction), sd = sd(fraction), .groups = 'drop') %>%
+  mutate(type = factor(type, levels = c('aPN1','vPN1','vpoEN','vpoIN','pMP2','pIP10')))
+
+# Plot bar chart with error bars + facets for partners
+ggplot(dataset_summary, aes(x = type, y = mean, fill = category)) +
+  geom_bar(stat = 'identity', position = position_dodge(width = 0.9)) +
+  geom_errorbar(aes(ymin = mean - sd, ymax = mean + sd), position = position_dodge(width = 0.9), width = 0.2) +
+  facet_wrap(~partners) +
+  theme_minimal(base_size = 14) +
+  labs(title = 'Expression ± SD per neuron type and pre/post partner ', x = 'Neuron Type', y = 'Mean Fraction', fill = 'Category') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## 9. Create Data Frame for `dimorphism`
+```{r create-dimorphism-df}
+# Initialize empty dataframe for dimorphism categories
+dimorphism_fraction_df <- data.frame(matrix(ncol = length(levels(mba$dimorphism)) + 2, nrow = 0))
+colnames(dimorphism_fraction_df) <- c(levels(mba$dimorphism), 'type', 'partners')
+dimorphism_fraction_df$type     <- character()
+dimorphism_fraction_df$partners <- character()
+
+# Populate by iterating over partners and neuron types
+for (partner in c('i','o')) {
+  for (i in seq_along(all.ids)) {
+    a <- calculate_dimorphism_contribution(
+      all.ids[[i]], partners = partner, mean_it = FALSE, splitter = 'dimorphism'
+    )
+    a$type     <- all.names[i]
+    a$partners <- partner
+    dimorphism_fraction_df <- bind_rows(dimorphism_fraction_df, a) %>%
+      mutate(across(everything(), ~replace_na(., 0)))
+  }
+}
+```
+
+## 10. Plot `dimorphism` (Stacked & Normalized)
+```{r plot-dimorphism-stacked}
+# Reshape and normalize for dimorphism categories
+dimorphism_long <- dimorphism_fraction_df %>%
+  pivot_longer(cols = colnames(dimorphism_fraction_df)[1:5], names_to = 'category', values_to = 'fraction')
+
+# Summarize and normalize group fractions
+group_sums_dim <- dimorphism_long %>%
+  group_by(type, partners, category) %>% summarise(total = sum(fraction, na.rm = TRUE), .groups = 'drop')
+
+normalized_dim <- group_sums_dim %>%
+  group_by(type, partners) %>% mutate(norm_fraction = total / sum(total)) %>% ungroup() %>%
+  mutate(type_partners = paste(type, partners, sep = '_'),
+         type_partners = factor(type_partners, levels = c('aPN1_i','aPN1_o','vPN1_i','vPN1_o','vpoEN_i','vpoEN_o','vpoIN_i','vpoIN_o','pMP2_i','pMP2_o','pIP10_i','pIP10_o')))
+
+# Create stacked bar chart for dimorphism categories
+ggplot(normalized_dim, aes(x = type_partners, y = norm_fraction, fill = category)) + geom_bar(stat = 'identity') + theme_minimal(base_size = 14) + labs(title = 'Normalized Dimorphic Categories by Neuron Type and pre/post partner', x = 'Neuron Type & Partner', y = 'Relative Contribution (Sums to 1)', fill = 'Category') + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## 11. Plot `dimorphism2` (Mean ± SD)
+```{r plot-dimorphism-errorbars}
+# Compute summary stats for dimorphism categories
+dim_summary <- dimorphism_long %>%
+  group_by(type, partners, category) %>% summarise(mean = mean(fraction), sd = sd(fraction), .groups = 'drop') %>%
+  mutate(type = factor(type, levels = c('aPN1','vPN1','vpoEN','vpoIN','pMP2','pIP10')))
+
+# Plot bar chart with error bars and facets
+ggplot(dim_summary, aes(x = type, y = mean, fill = category)) +
+  geom_bar(stat = 'identity', position = position_dodge(width = 0.9)) +
+  geom_errorbar(aes(ymin = mean - sd, ymax = mean + sd), position = position_dodge(width = 0.9), width = 0.2) +
+  facet_wrap(~partners) +
+  theme_minimal(base_size = 14) +
+  labs(title = 'Mean Dimorphic Categories ± SD per neuron type and pre/post partner', x = 'Neuron Type', y = 'Mean Fraction', fill = 'Category') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
 
