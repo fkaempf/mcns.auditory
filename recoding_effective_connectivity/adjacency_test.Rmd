@@ -24,24 +24,6 @@ Load metadata all cells
 ```{r}
 synapse_threshold=5
 mba<-mcns_body_annotations()
-mba.type.coalesced <-  mba %>%
-  mutate(type = coalesce(type, 
-                         flywire_type, 
-                         hemibrain_type, 
-                         manc_type),
-         top_nt=coalesce(consensus_nt,celltype_predicted_nt,predicted_nt))%>%
-  mutate(type = ifelse(grepl("Vaughan 2014: aPN1", synonyms),'aPN1',type))
-
-
-
-#flytable<-flytable_query("select * from info",limit=1000) #this throws an error right now?
-mba_synonyms <- mba%>%
-  select(bodyid,type,flywire_type,synonyms)%>%
-  filter(!is.na(flywire_type))
-mba_synonyms_unique <- mba_synonyms%>%distinct(type,.keep_all=T)
-
-#data<-fromJSON('/Users/fkampf/mappings.json')
-
 ```
 
 Flat connectome
