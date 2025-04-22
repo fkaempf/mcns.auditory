@@ -64,8 +64,8 @@ mba <- mcns_body_annotations() %>%
 ## 3. Define Key Neuron IDs
 ```{r define-ids}
 # Identify neuron body IDs by synonyms or type labels
-vPN1.ids  <- mba %>% filter(str_detect(synonyms, 'aPN1')) %>% pull(bodyid)
-aPN1.ids  <- mba %>% filter(str_detect(synonyms, 'vPN1')) %>% pull(bodyid)
+vPN1.ids  <- mba %>% filter(str_detect(synonyms, 'vPN1')) %>% pull(bodyid)
+aPN1.ids  <- mba %>% filter(str_detect(synonyms, 'aPN1')) %>% pull(bodyid)
 vpoEN.ids <- mba %>% filter(str_detect(type, 'vpoEN'))    %>% pull(bodyid)
 vpoIN.ids <- mba %>% filter(str_detect(type, 'vpoIN'))    %>% pull(bodyid)
 pIP10.ids <- mba %>% filter(str_detect(type, 'pIP10'))    %>% pull(bodyid)
@@ -73,6 +73,25 @@ pMP2.ids  <- mba %>% filter(str_detect(type, 'pMP2'))     %>% pull(bodyid)
 all.ids   <- list(vPN1.ids, aPN1.ids, vpoIN.ids, vpoEN.ids, pIP10.ids, pMP2.ids)
 all.names <- c('vPN1','aPN1','vpoIN','vpoEN','pIP10','pMP2')
 ```
+
+### 3.1 Define aPN1 like neuron IDs
+```{r}
+aPN1.types <- mba %>% filter(bodyid %in% aPN1.ids,!is.na(type)) %>% pull(type) %>% unique()
+aPN1.groups <- mba %>% filter(bodyid %in% aPN1.ids) %>% pull(group) %>% unique()
+aPN1_like.ids <- mba %>% filter(type %in% aPN1.types | group %in% aPN1.groups) %>% filter(!str_detect(synonyms, 'aPN1')) %>% pull(bodyid)
+all.ids   <- list(vPN1.ids, aPN1.ids,aPN1_like.ids, vpoIN.ids, vpoEN.ids, pIP10.ids, pMP2.ids)
+all.names <- c('vPN1','aPN1','aPN1_like','vpoIN','vpoEN','pIP10','pMP2')
+```
+
+### 3.2 Define all post JO-B neurons for comparison
+```{r}
+jobd.ids <- cf_partners(cf_ids(malecns = ('JO-B')),partners = 'o',threshold = 5)%>%filter(superclass!='cb_sensory')%>% pull(partner)%>%unique()
+jobd.ids <- setdiff(jobd.ids,all.ids)
+#all.ids   <- list(jobd.ids,vPN1.ids, aPN1.ids,aPN1_like.ids, vpoIN.ids, vpoEN.ids, pIP10.ids, pMP2.ids)
+#all.names <- c('JO-B_down','vPN1','aPN1','aPN1_like','vpoIN','vpoEN','pIP10','pMP2')
+```
+
+
 
 ## 4. Pull Hemilineage Information
 ```{r hemilineage}
@@ -171,7 +190,7 @@ normalized_group <- group_sums %>%
   ungroup() %>%
   mutate(type_partners = paste(type, partners, sep = '_'),
          type_partners = factor(type_partners,
-           levels = c('aPN1_i','aPN1_o','vPN1_i','vPN1_o','vpoEN_i','vpoEN_o','vpoIN_i','vpoIN_o','pMP2_i','pMP2_o','pIP10_i','pIP10_o')
+           levels = c('JO-B_down_i','JO-B_down_o','aPN1_i','aPN1_o','aPN1_like_i','aPN1_like_o','vPN1_i','vPN1_o','vpoEN_i','vpoEN_o','vpoIN_i','vpoIN_o','pMP2_i','pMP2_o','pIP10_i','pIP10_o')
          ))
 
 # Create stacked bar chart
@@ -189,7 +208,7 @@ ggplot(normalized_group, aes(x = type_partners, y = norm_fraction, fill = catego
 dataset_summary <- fru_dsx_long %>%
   group_by(type, partners, category) %>%
   summarise(mean = mean(fraction), sd = sd(fraction), .groups = 'drop') %>%
-  mutate(type = factor(type, levels = c('aPN1','vPN1','vpoEN','vpoIN','pMP2','pIP10')))
+  mutate(type = factor(type, levels = c('JO-B_down','aPN1','aPN1_like','vPN1','vpoEN','vpoIN','pMP2','pIP10')))
 
 # Plot bar chart with error bars + facets for partners
 ggplot(dataset_summary, aes(x = type, y = mean, fill = category)) +
@@ -236,7 +255,7 @@ group_sums_dim <- dimorphism_long %>%
 normalized_dim <- group_sums_dim %>%
   group_by(type, partners) %>% mutate(norm_fraction = total / sum(total)) %>% ungroup() %>%
   mutate(type_partners = paste(type, partners, sep = '_'),
-         type_partners = factor(type_partners, levels = c('aPN1_i','aPN1_o','vPN1_i','vPN1_o','vpoEN_i','vpoEN_o','vpoIN_i','vpoIN_o','pMP2_i','pMP2_o','pIP10_i','pIP10_o')))
+         type_partners = factor(type_partners, levels = c('JO-B_down_i','JO-B_down_o','aPN1_i','aPN1_o','aPN1_like_i','aPN1_like_o','vPN1_i','vPN1_o','vpoEN_i','vpoEN_o','vpoIN_i','vpoIN_o','pMP2_i','pMP2_o','pIP10_i','pIP10_o')))
 
 # Create stacked bar chart for dimorphism categories
 ggplot(normalized_dim, aes(x = type_partners, y = norm_fraction, fill = category)) + geom_bar(stat = 'identity') + theme_minimal(base_size = 14) + labs(title = 'Normalized Dimorphic Categories by Neuron Type and pre/post partner', x = 'Neuron Type & Partner', y = 'Relative Contribution (Sums to 1)', fill = 'Category') + theme(axis.text.x = element_text(angle = 45, hjust = 1))
@@ -247,7 +266,7 @@ ggplot(normalized_dim, aes(x = type_partners, y = norm_fraction, fill = category
 # Compute summary stats for dimorphism categories
 dim_summary <- dimorphism_long %>%
   group_by(type, partners, category) %>% summarise(mean = mean(fraction), sd = sd(fraction), .groups = 'drop') %>%
-  mutate(type = factor(type, levels = c('aPN1','vPN1','vpoEN','vpoIN','pMP2','pIP10')))
+  mutate(type = factor(type, levels = c('JO-B_down','aPN1','aPN1_like','vPN1','vpoEN','vpoIN','pMP2','pIP10')))
 
 # Plot bar chart with error bars and facets
 ggplot(dim_summary, aes(x = type, y = mean, fill = category)) +
