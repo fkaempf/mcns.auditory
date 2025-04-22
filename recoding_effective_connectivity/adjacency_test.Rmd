@@ -1,0 +1,273 @@
+---
+title: "adjacency_test"
+output: html_document
+---
+
+Imports
+```{r}
+library(malecns)
+library(coconatfly)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(plotly)
+library(stringr)
+library(igraph)
+library(fafbseg)
+library(tidygraph)
+library(ggraph)
+library(jsonlite)
+```
+
+
+Load metadata all cells
+```{r}
+synapse_threshold=5
+mba<-mcns_body_annotations()
+mba.type.coalesced <-  mba %>%
+  mutate(type = coalesce(type, 
+                         flywire_type, 
+                         hemibrain_type, 
+                         manc_type),
+         top_nt=coalesce(consensus_nt,celltype_predicted_nt,predicted_nt))%>%
+  mutate(type = ifelse(grepl("Vaughan 2014: aPN1", synonyms),'aPN1',type))
+
+
+
+#flytable<-flytable_query("select * from info",limit=1000) #this throws an error right now?
+mba_synonyms <- mba%>%
+  select(bodyid,type,flywire_type,synonyms)%>%
+  filter(!is.na(flywire_type))
+mba_synonyms_unique <- mba_synonyms%>%distinct(type,.keep_all=T)
+
+#data<-fromJSON('/Users/fkampf/mappings.json')
+
+```
+
+Flat connectome
+```{r}
+library(Matrix)
+path = "/Users/fkampf/Downloads/snapshots_2025-02-11-a4c0d9-unlocked_flat-connectome_connectome-weights-2025-02-11-a4c0d9-unlocked-minconf-0.5-primary-only.feather"
+flat.connectome.feather <- arrow::open_dataset(path, format = "feather")
+flat.connectome.df.0 <- flat.connectome.feather %>%
+    collect() %>%
+    data.frame()%>%
+    mutate(body_pre=as.character(body_pre),body_post=as.character(body_post))
+
+unique_body <- union(flat.connectome.df.0$body_pre, flat.connectome.df.0$body_post)
+
+id2type.map <- type2id.dict.final$type[match(unique_body, type2id.dict.final$body)]
+id2type.map[is.na(id2type.map)]='NA'
+
+adj_matrix_full <- sparseMatrix(
+  i = match(flat.connectome.df.0$body_pre, unique_body),
+  j = match(flat.connectome.df.0$body_post, unique_body),
+  x = flat.connectome.df.0$weight,
+  dims = c(length(unique_body), length(unique_body)),
+  dimnames = list(unique_body, unique_body)
+)
+
+adj_matrix_full_type <- sparseMatrix(
+  i = match(flat.connectome.df.0$body_pre, unique_body),
+  j = match(flat.connectome.df.0$body_post, unique_body),
+  x = flat.connectome.df.0$weight,
+  dims = c(length(unique_body), length(unique_body)),
+  dimnames = list(id2type.map, id2type.map)
+)
+
+
+adj_matrix_full.normed.post <- colScale(adj_matrix_full)
+colnames(adj_matrix_full.normed.post) <- colnames(adj_matrix_full)
+rownames(adj_matrix_full.normed.post) <- rownames(adj_matrix_full)
+
+adj_matrix_full.normed.pre <- rowScale(adj_matrix_full)
+colnames(adj_matrix_full.normed.pre) <- colnames(adj_matrix_full)
+rownames(adj_matrix_full.normed.pre) <- rownames(adj_matrix_full)
+
+```
+queried via cf_partners (10930)
+```{r}
+aa<-cf_partners(cf_ids(malecns=mba%>%pull(bodyid)),partners='o',threshold=5)
+aa<-aa%>%left_join(mba%>%select(type,bodyid)%>%rename(pre_type=type),by='bodyid')
+```
+norming function
+```{r}
+colScale <- function(A, na.rm = TRUE) {
+  scalefac <- 1 / Matrix::colSums(A)
+  if (na.rm) scalefac[!is.finite(scalefac)] <- 0
+  B <- A %*% Matrix::Diagonal(x = scalefac)
+  B
+  
+}
+
+rowScale <- function(A, na.rm = TRUE) {
+  scalefac <- 1 / Matrix::rowSums(A)
+  if (na.rm) scalefac[!is.finite(scalefac)] <- 0
+  B <- Matrix::Diagonal(x = scalefac) %*% A
+  B
+}
+```
+
+
+## Norming per cell
+normed per adj matrix (10930)
+```{r}
+unique_body <- union(aa$bodyid, aa$partner)
+adj_matrix <- sparseMatrix(
+  i = match(aa$bodyid, unique_body),
+  j = match(aa$partner, unique_body),
+  x = aa$weight,
+  dims = c(length(unique_body), length(unique_body)),
+  dimnames = list(unique_body, unique_body))
+
+adj.matrix.normed.post <- colScale(adj_matrix)
+colnames(adj.matrix.normed.post) <- colnames(adj_matrix)
+rownames(adj.matrix.normed.post) <- rownames(adj_matrix)
+
+adj.matrix.normed.pre <- rowScale(adj_matrix)
+colnames(adj.matrix.normed.pre) <- colnames(adj_matrix)
+rownames(adj.matrix.normed.pre) <- rownames(adj_matrix)
+```
+
+normed post manually (519325-->10930)
+```{r}
+aa.all.10930 <- aa %>%filter(partner==10930)%>%pull(weight)%>%sum()
+aa.519325.10930 <- aa %>%filter(partner==10930,bodyid==519325)%>%pull(weight)%>%sum()
+fraction.manual <- aa.519325.10930/aa.all.10930
+print(paste('Manual:',as.character(fraction.manual),collapse = ' '))
+print(paste('Automatic:',as.character(adj.matrix.normed.post['519325','10930']),collapse = ' '))
+```
+normed pre manually (519325-->10930)
+```{r}
+aa.519325.all <- aa %>%filter(bodyid==519325)%>%pull(weight)%>%sum()
+aa.519325.10930 <- aa %>%filter(partner==10930,bodyid==519325)%>%pull(weight)%>%sum()
+fraction.manual <- aa.519325.10930/aa.519325.all
+print(paste('Manual:',as.character(fraction.manual),collapse = ' '))
+print(paste('Automatic:',as.character(adj.matrix.normed.pre['519325','10930']),collapse = ' '))
+```
+
+
+
+## Norming per type
+normed per adj matrix (pMP2)
+```{r}
+unique_type <- union(aa$type, aa$pre_type)
+adj_matrix_type <- sparseMatrix(
+  i = match(aa$pre_type, unique_type),
+  j = match(aa$type, unique_type),
+  x = aa$weight,
+  dims = c(length(unique_type), length(unique_type)),
+  dimnames = list(unique_type, unique_type))
+
+adj_matrix_type.normed.post <- colScale(adj_matrix_type)
+colnames(adj_matrix_type.normed.post) <- colnames(adj_matrix_type)
+rownames(adj_matrix_type.normed.post) <- rownames(adj_matrix_type)
+
+adj_matrix_typex.normed.pre <- rowScale(adj_matrix_type)
+colnames(adj_matrix_typex.normed.pre) <- colnames(adj_matrix_type)
+rownames(adj_matrix_typex.normed.pre) <- rownames(adj_matrix_type)
+```
+
+normed post manually (519325-->10930)
+```{r}
+aa.all.pMP2 <- aa %>%filter(type=='pMP2')%>%pull(weight)%>%sum()
+aa.SIP107m.pMP2 <- aa %>%filter(type=='pMP2',pre_type=='SIP107m')%>%pull(weight)%>%sum()
+fraction.manual <- aa.SIP107m.pMP2/aa.all.pMP2
+print(paste('Manual:',as.character(fraction.manual),collapse = ' '))
+print(paste('Automatic:',as.character(adj_matrix_type.normed.post['SIP107m','pMP2']),collapse = ' '))
+```
+normed pre manually (519325-->10930)
+```{r}
+aa.SIP107m.all <- aa %>%filter(pre_type=='SIP107m')%>%pull(weight)%>%sum()
+aa.SIP107m.pMP2 <- aa %>%filter(type=='pMP2',pre_type=='SIP107m')%>%pull(weight)%>%sum()
+fraction.manual <- aa.SIP107m.pMP2/aa.SIP107m.all
+print(paste('Manual:',as.character(fraction.manual),collapse = ' '))
+print(paste('Automatic:',as.character(adj_matrix_typex.normed.pre['SIP107m','pMP2']),collapse = ' '))
+```
+Function create connectivity
+```{r}
+fetch_connectivity <- function(additional.mba.cols = c(),synapse_threshold = 5) {
+  mba <- mcns_body_annotations()
+  selected_columns <- c("type", "bodyid", additional.mba.cols)  # default + extra args
+  selected_columns <- intersect(selected_columns,colnames(mba))
+  connectivity <- cf_partners(cf_ids(malecns = mba %>% pull(bodyid)),
+                              partners = 'o',
+                              threshold = synapse_threshold)
+  
+  connectivity <- connectivity %>%
+    left_join(mba %>%
+                select(all_of(selected_columns)) %>%
+                rename(pre_type = type),
+              by = 'bodyid')%>%
+    rename(post_type = type)
+  return(connectivity)
+}
+```
+
+
+
+
+Function adjacency matrix
+```{r}
+calculate_normed_adj_matrix <-function(connectivity,cell.or.type='type',pre.or.post='pre'){
+  colScale <- function(A, na.rm = TRUE) {
+    scalefac <- 1 / Matrix::colSums(A)
+    if (na.rm) scalefac[!is.finite(scalefac)] <- 0
+    B <- A %*% Matrix::Diagonal(x = scalefac)
+    B
+    }
+  
+  rowScale <- function(A, na.rm = TRUE) {
+    scalefac <- 1 / Matrix::rowSums(A)
+    if (na.rm) scalefac[!is.finite(scalefac)] <- 0
+    B <- Matrix::Diagonal(x = scalefac) %*% A
+    B
+    }
+  
+  if(cell.or.type=='cell'){
+    unique.identifier <- union(connectivity$pre_id, connectivity$post_id)
+    
+    adj.matrix <- sparseMatrix(
+      i = match(connectivity$pre_id, unique.identifier),
+      j = match(connectivity$post_id, unique.identifier),
+      x = connectivity$weight,
+      dims = c(length(unique.identifier), length(unique.identifier)),
+      dimnames = list(unique.identifier, unique.identifier))
+    
+  }else{
+    unique.identifier <- union(connectivity$pre_type, connectivity$post_type)
+    
+    adj.matrix <- sparseMatrix(
+      i = match(connectivity$pre_type, unique.identifier),
+      j = match(connectivity$post_type, unique.identifier),
+      x = connectivity$weight,
+      dims = c(length(unique.identifier), length(unique.identifier)),
+      dimnames = list(unique.identifier, unique.identifier))
+  }
+  
+  if(pre.or.post=='pre'){
+    adj.matrix.normed.pre <- rowScale(adj.matrix)
+    colnames(adj.matrix.normed.pre) <- colnames(adj.matrix)
+    rownames(adj.matrix.normed.pre) <- rownames(adj.matrix)
+    return(adj.matrix.normed.pre)
+    
+  }else{
+    adj.matrix.normed.post <- colScale(adj.matrix)
+    colnames(adj.matrix.normed.post) <- colnames(adj.matrix)
+    rownames(adj.matrix.normed.post) <- rownames(adj.matrix)
+    return(adj.matrix.normed.post)
+  }
+
+}
+```
+
+
+test run 
+
+```{r}
+conn <-fetch_connectivity()
+nam <-calculate_normed_adj_matrix(conn)
+nam['SIP107m','pMP2']
+adj_matrix_typex.normed.pre['SIP107m','pMP2']
+```
+
