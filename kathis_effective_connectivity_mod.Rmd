@@ -17,12 +17,14 @@ editor_options:
 This document performs an analysis of male CNS connectivity data. We
 extract connectivity matrices, normalize the data using efficient sparse
 matrix operations, and generate visualizations of input/output neuron
-connectivity. The workflow includes: • Data extraction and preprocessing
-• Construction and normalization of a sparse connectivity matrix •
-Extraction and processing of neuron annotations • Layer propagation
-computations • Aggregation and visualization via heatmaps and boxplots
+connectivity. The workflow includes: 
+• Data extraction and preprocessing
+• Construction and normalization of a sparse connectivity matrix 
+• Extraction and processing of neuron annotations 
+• Layer propagation computations 
+• Aggregation and visualization via heatmaps and boxplots
 
-## Load Required Libraries
+#0 Load Required Libraries
 
 ```{r}
 library(neuprintr)
@@ -37,9 +39,9 @@ library(cowplot)
 library(coconat)  # for partner_summary2adjacency_matrix (if available)
 ```
 
-# Data Extraction and Preprocessing
+#1 Data Extraction and Preprocessing
 
-##  Extract Male CNS Annotations
+##1.1  Extract Male CNS Annotations
 
 ```{r}
 # Get male CNS annotations, filtering out unwanted statuses.
@@ -50,17 +52,14 @@ query.ids <- as.integer64(
                                   "Out of scope", "Glia", 
                                   "Orphan-artifact", NA))]
 )
-query_info <- mcns_neuprint_meta(query.ids)
-query_info <- query_info[!(query_info$status %in% c("Orphan", NA)), ]
-query.ids2 <- na.omit(as.character(query_info$bodyid))
-rm(query.ids, query_info)
 ```
 
-Load the Flat Connectome
+##1.2 Load the Flat Connectome
 
 ```{r}
-conn_feather <- arrow::open_dataset('/Users/fkampf/Downloads/connectome-weights-2023-11-15-f20f31-unlocked-minconf-0.5-primary-only.feather',
-                                      format = 'feather')
+path <- '/Users/fkampf/Downloads/snapshots_2025-02-11-a4c0d9-unlocked_flat-connectome_connectome-weights-2025-02-11-a4c0d9-unlocked-minconf-0.5-primary-only.feather'
+conn_feather <- arrow::open_dataset(path,format = 'feather')
+
 conn_feather.inmem <- conn_feather %>%
   select(body_pre, body_post, weight) %>%
   collect()
@@ -77,10 +76,9 @@ np_adj <- coconat::partner_summary2adjacency_matrix(conn_feather.inmem,
                                                     standardise_input = FALSE)
 ```
 
-Matrix Scaling
+##1.3 Matrix Scaling
 
-Column Scaling Function
-
+##1.3.1 Column Scaling Function
 ```{r}
 #' Efficient column scaling for sparse matrices
 #'
@@ -106,61 +104,48 @@ colScale <- function(A, na.rm = TRUE) {
 }
 ```
 
-Compute the Input Percentage Matrix
-
+##1.3.2 Compute the Input Percentage Matrix
 ```{r}
 np_adj_per_in <- colScale(np_adj)
 colnames(np_adj_per_in) <- colnames(np_adj)
 ```
 
-Restrict to Valid Neuron Bodies
-
+##1.3.4 Restrict to Valid Neuron Bodies
 ```{r}
+mdf = mcns_dvid_annotations()
+query.ids = as.integer64(mdf$bodyid[!(mdf$status %in% c("Orphan","PRT Orphan", "RT Orphan",
+                                                        "Unimportant","Orphan hotknife","Out of scope",
+                                                        "Glia","Orphan-artifact",NA))])
+query_info = mcns_neuprint_meta(query.ids)
+query_info = query_info[!(query_info$status %in% c("Orphan",NA)),]
+query.ids2 = na.omit(as.character(query_info$bodyid))
+
 np_adj <- np_adj[rownames(np_adj) %in% query.ids2, colnames(np_adj) %in% query.ids2]
 np_adj_per_in <- np_adj_per_in[rownames(np_adj_per_in) %in% query.ids2, colnames(np_adj_per_in) %in% query.ids2]
 rm(query.ids2, conn_feather.inmem, conn_feather, mdf)
 ```
 
-Input/Output Neuron Annotations
+#2 Add Input/Output Neuron Annotations
 
-Process Annotations
-
+##2.1 Process Annotations
 ```{r}
 all_info <- mcns_body_annotations()
 
-cell_types <- c('CB1076', 'CB1078', 'CB3710', 'CB2521',
-                'CB1542', 'CB1038', 'CB1427', 'CB2556', 'CB2380')
-mba <- mcns_body_annotations()
-mba.type.coalesced <- mba %>%
-  mutate(type = coalesce(type, flywire_type, hemibrain_type, manc_type))
-input_ids <- mba.type.coalesced %>% 
-  filter(flywire_type %in% cell_types) %>%
-  pull(bodyid) %>%
-  unique()
+input.cell_types <- c("SAD051_b","SAD051_a",'AVLP721m','(JO-B)')
 
-input_info <- mba[mba$bodyid %in% input_ids, ]
+input_ids<-all_info%>%filter(type %in% input.cell_types)%>%pull(bodyid)%>%unique()
+input_info <- all_info[all_info$bodyid %in% input_ids, ]
 input_info_sel <- input_info[, c("bodyid", "class", "group", "type", "instance", "soma_side", "root_side", "superclass")]
+
 input_info_sel$soma_or_root_side <- ifelse(!is.na(input_info_sel$soma_side) & input_info_sel$soma_side != "",
                                             input_info_sel$soma_side,
                                             input_info_sel$root_side)
 
-output_ids <- as.character(c(57956, 30261, 27091, 18554, 17337, 13495, 17918, 19136, 515347,
-                             15035, 16719, 17089, 17589, 31586, 12442, 18276, 17098, 20597,
-                             267996, 24537, 21349, 79094, 32788, 27072, 16559, 43592, 21586,
-                             13655, 22744, 20803, 15324, 84181, 518589, 18830, 19894, 556999,
-                             30669, 19818, 513129, 517178, 559181, 35694, 27507, 53355, 532582,
-                             17867, 555488, 514909, 24072, 17618, 17851, 13790, 22346, 17434,
-                             10930, 70011, 19948, 29992, 513515, 513651, 517653, 516954, 20392,
-                             10765, 35993, 539247, 21507, 37651, 30273, 16805, 20117, 555751,
-                             13562, 21033, 29043, 20068, 87497, 522357, 27330, 12889, 75407,
-                             34082, 27368, 41366, 26543, 19600, 24874, 33318, 529875, 41518,
-                             24060, 23968, 23558, 518253, 16541, 528986, 555811, 31905, 514077,
-                             55707, 33009, 17841, 19109, 33503, 517337, 519518, 25542, 22093,
-                             521453, 521449, 531383, 15876, 46660, 518038, 30391, 17702, 515990,
-                             37522, 18861, 33435, 47325, 29462, 14492, 557035, 513652, 17487,
-                             18017, 55136, 30558, 19200, 19236, 524297, 17470, 29483, 30455,
-                             18990, 50692, 37977, 29143, 26989, 28094, 33519, 522419, 71385,
-                             26746, 23319, 22270))
+
+output.cell_types <- c("pMP2","pIP10",'vpoEN','vpoIN')
+
+output_ids <- all_info%>%filter(type %in% output.cell_types)%>%pull(bodyid)%>%unique()
+
 output_info <- all_info[all_info$bodyid %in% output_ids, ]
 output_info_sel <- output_info[, c("bodyid", "class", "group", "type", "instance", "soma_side", "root_side", "superclass")]
 output_info_sel$soma_or_root_side <- ifelse(!is.na(output_info_sel$soma_side) & output_info_sel$soma_side != "",
@@ -168,125 +153,191 @@ output_info_sel$soma_or_root_side <- ifelse(!is.na(output_info_sel$soma_side) & 
                                              output_info_sel$root_side)
 ```
 
-Precalculate Layers and Compute Connectivity Scores
+#3 Precalculate Layers and Compute Connectivity Scores
 
-Precalculate Layers
+##3.1 Precalculate Layers
 
 ```{r}
 desired_layers <- 3
-layer_vec <- paste0("v", seq(from = 0, to = desired_layers))
+
+#this is just creating a vector with the names of the layer. For example if desired_layers=3 --> layer_vec "v0" "v1" "v2" "v3".
+layer_vec <- paste0("v", seq(from = 0, to = desired_layers)) 
+#this just preallocates a list of the desired layer length (meaning if the dsired_layers=3 --> length(layer_list)==4 with layer 0 being the input layer)
 layer_list <- vector("list", length(layer_vec))
+#this just renames the indices of the layer_list
 names(layer_list) <- layer_vec
-layer_list[["v1"]] <- np_adj_per_in[rownames(np_adj_per_in) %in% input_info_sel$bodyid, ]
-for (layer in 2:desired_layers) {
+#assign layer 0 to v0 in layer list, also it slices the row (aka input) to your input neurons
+layer_list[["v0"]] <- np_adj_per_in[rownames(np_adj_per_in) %in% input_info_sel$bodyid, ]
+#here you do the matrix multiplication
+for (layer in 1:desired_layers) {
   layer_list[[layer + 1]] <- layer_list[[layer]] %*% np_adj_per_in
 }
 ```
 
-Compute Connectivity Scores
+##3.2 Compute Connectivity Scores
 
 We compute the input/output connectivity scores and assign connectivity
 details for each input neuron type.
 
 ```{r}
+#just based on your input ids get represented types
 input_types <- unique(input_info_sel$type)
+#for each neuron type in your input ids execute the following code
 for (s in 1:length(input_types)) {
+  #this is taking the current inpt type and initializes it as an variable assigning to it all the corresponding bodyids
   assign(input_types[s], na.omit(unique(input_info$bodyid[grepl(input_types[s], input_info$type)])))
 }
+
+#just based on your output ids get represented types
 output_order <- sort(unique(output_info$type))
 
+#preallocate an empty dataframe to save your connectivity scores
 in_out_scores <- setNames(data.frame(matrix(ncol = 16, nrow = 0)),
                           c("bodyid", "conn_score", "ds_layer", "class", "group", "type", 
                             "instance", "soma_side", "rootSide", "superclass", 
                             "soma_or_root_side", "input", "in_side", "ipsi_contra"))
+in_out_scores_all <- setNames(data.frame(matrix(ncol = 16, nrow = 0)),
+                          c("bodyid", "conn_score", "ds_layer", "class", "group", "type", 
+                            "instance", "soma_side", "rootSide", "superclass", 
+                            "soma_or_root_side", "input", "in_side", "ipsi_contra"))
+
+#for each neuron type in your input ids execute the following code
 for (n in 1:length(input_types)) {
+  #get for the current type the ids that are on the left vs right side
   startn_r <- as.character(na.omit(input_info_sel$bodyid[input_info_sel$type == input_types[n] & 
                                                             input_info_sel$soma_or_root_side == "R"]))
   startn_l <- as.character(na.omit(input_info_sel$bodyid[input_info_sel$type == input_types[n] & 
                                                             input_info_sel$soma_or_root_side == "L"]))
+  
+  #When there is at least one neuron on the right and left hemisphere
   if (length(startn_r) > 0 & length(startn_l) > 0) {
-    input <- input_types[n]
-    
+
+    #for cells on the left and right preallocate a list with the length of the desired layers also name the entries
     norm_list_l <- vector("list", length(layer_vec))
     names(norm_list_l) <- layer_vec
     norm_list_r <- vector("list", length(layer_vec))
     names(norm_list_r) <- layer_vec
     
-    for (layer in 1:desired_layers) {
+    #for each desired layer execute the following code
+    for (layer in 1:(desired_layers+1)) {
+      #if there is at least one neuron of the current input type on the left 
       if (length(startn_l) > 1) {
-        temp_layer_conn_str <- Matrix::colSums(layer_list[[layer + 1]][na.omit(match(startn_l, rownames(layer_list[[layer + 1]]))), ])
+        #This line sums the sparse matrix columns for the rows that match the current input neurons on the left 
+        temp_layer_conn_str <- Matrix::colSums(layer_list[[layer]][na.omit(match(startn_l, rownames(layer_list[[layer]]))), ])
       } else {
-        temp_layer_conn_str <- layer_list[[layer + 1]][na.omit(match(startn_l, rownames(layer_list[[layer + 1]]))), ]
+        #you get back an empty sparse matrix with the same number of columns as the original since startn_l = character(0)
+        temp_layer_conn_str <- layer_list[[layer]][na.omit(match(startn_l, rownames(layer_list[[layer]]))), ]
       }
-      norm_list_l[[layer + 1]] <- setNames(as.vector(temp_layer_conn_str / mean(temp_layer_conn_str[temp_layer_conn_str > 0])),
+      #noramlize each connection by mean scaling, colnames are also reassigned
+      norm_list_l[[layer ]] <- setNames(as.vector(temp_layer_conn_str / mean(temp_layer_conn_str[temp_layer_conn_str > 0])),
                                            colnames(np_adj_per_in))
+      #do the same things for right hemisphere neurons
       if (length(startn_r) > 1) {
-        temp_layer_conn_str <- Matrix::colSums(layer_list[[layer + 1]][na.omit(match(startn_r, rownames(layer_list[[layer + 1]]))), ])
+        temp_layer_conn_str <- Matrix::colSums(layer_list[[layer]][na.omit(match(startn_r, rownames(layer_list[[layer]]))), ])
       } else {
-        temp_layer_conn_str <- layer_list[[layer + 1]][na.omit(match(startn_r, rownames(layer_list[[layer + 1]]))), ]
+        temp_layer_conn_str <- layer_list[[layer]][na.omit(match(startn_r, rownames(layer_list[[layer]]))), ]
       }
-      norm_list_r[[layer + 1]] <- setNames(as.vector(temp_layer_conn_str / mean(temp_layer_conn_str[temp_layer_conn_str > 0])),
+      norm_list_r[[layer]] <- setNames(as.vector(temp_layer_conn_str / mean(temp_layer_conn_str[temp_layer_conn_str > 0])),
                                            colnames(np_adj_per_in))
     }
-    
+    #preallocate and empty dataframe 
     out_r_scores_df <- setNames(data.frame(matrix(ncol = 3, nrow = 0)),
                                 c("bodyid", "conn_score", "ds_layer"))
-    for (layer in 2:desired_layers) {
+    #for each layer we calculated connectivity
+    for (layer in 1:(desired_layers+1)) {
+      #for each output_id extract the connectivity value
       out_r_scores <- norm_list_r[[layer]][names(norm_list_r[[layer]]) %in% output_ids]
-      df <- data.frame(bodyid = as.double(names(out_r_scores)), conn_score = out_r_scores, ds_layer = layer - 1, row.names = NULL)
+      #add connectivity scores to dataframe
+      df <- data.frame(bodyid = as.double(names(out_r_scores)), 
+                       conn_score = out_r_scores,
+                       ds_layer = layer, row.names = NULL)
       out_r_scores_df <- rbind(out_r_scores_df, df)
     }
+    #get the layer where maximum connectivity appears
     out_r_scores_df %>%
       group_by(bodyid) %>%
       slice(which.max(conn_score)) -> out_r_scores_df_max
     
+    #add info to maximum connectivity layer
     out_r_scores_df_max_info <- left_join(out_r_scores_df_max, output_info_sel, by = "bodyid")
-    out_r_scores_df_max_info$input <- input
+    out_r_scores_df_all_info <- left_join(out_r_scores_df, output_info_sel, by = "bodyid")
+    out_r_scores_df_max_info$input <- input_types[n]
+    out_r_scores_df_all_info$input <- input_types[n]
     out_r_scores_df_max_info$in_side <- "R"
+    out_r_scores_df_all_info$in_side <- "R"
     
+    #preallocate an emptuy dataframe for left hemisphere
     out_l_scores_df <- setNames(data.frame(matrix(ncol = 3, nrow = 0)),
                                 c("bodyid", "conn_score", "ds_layer"))
-    for (layer in 2:desired_layers) {
+    for (layer in 1:(desired_layers+1)) {
+      #for each output_id extract the connectivity value
       out_l_scores <- norm_list_l[[layer]][names(norm_list_l[[layer]]) %in% output_ids]
-      df <- data.frame(bodyid = as.double(names(out_l_scores)), conn_score = out_l_scores, ds_layer = layer - 1, row.names = NULL)
+      #add connectivity scores to dataframe
+      df <- data.frame(bodyid = as.double(names(out_l_scores)), conn_score = out_l_scores, ds_layer = layer, row.names = NULL)
       out_l_scores_df <- rbind(out_l_scores_df, df)
     }
+    #get the layer where maximum connectivity appears
     out_l_scores_df %>%
       group_by(bodyid) %>%
       slice(which.max(conn_score)) -> out_l_scores_df_max
     
+    #add info to maximum connectivity layer
     out_l_scores_df_max_info <- left_join(out_l_scores_df_max, output_info_sel, by = "bodyid")
-    out_l_scores_df_max_info$input <- input
+    out_l_scores_df_all_info <- left_join(out_l_scores_df, output_info_sel, by = "bodyid")
+    out_l_scores_df_max_info$input <- input_types[n]
+    out_l_scores_df_all_info$input <- input_types[n]
     out_l_scores_df_max_info$in_side <- "L"
+    out_l_scores_df_all_info$in_side <- "L"
     
+    #bring left and right together
     out_scores <- rbind(out_r_scores_df_max_info, out_l_scores_df_max_info)
+    out_scores_all <- rbind(out_l_scores_df_all_info, out_r_scores_df_all_info)
     out_scores$ipsi_contra <- NA
+    out_scores_all$ipsi_contra <- NA
     out_scores$ipsi_contra[out_scores$soma_or_root_side == out_scores$in_side] <- "ipsi"
     out_scores$ipsi_contra[out_scores$soma_or_root_side != out_scores$in_side] <- "contra"
+    out_scores_all$ipsi_contra[out_scores_all$soma_or_root_side == out_scores_all$in_side] <- "ipsi"
+    out_scores_all$ipsi_contra[out_scores_all$soma_or_root_side != out_scores_all$in_side] <- "contra"
     
     in_out_scores <- rbind(in_out_scores, out_scores)
+    in_out_scores_all <- rbind(in_out_scores_all, out_scores_all)
   }
 }
 ```
 
-Aggregation and Visualization
+# 4 Aggregation and Visualization
 
-Aggregate the Connectivity Scores
+## 4.1 Aggregate the Connectivity Scores
 
 ```{r}
+#see per start type, ipsi_contra and target type what is the mean conn_score and in which layer it appears
 in_out_scores %>%
   group_by(input, type, ipsi_contra) %>%
   summarise_at(vars("conn_score", "ds_layer"), mean) -> in_out_scores_mean
 
+in_out_scores_all %>%
+  mutate(type=paste(bodyid,type))%>%
+  group_by(input, type, ipsi_contra) %>%
+  summarise_at(vars("conn_score", "ds_layer"), mean) -> in_out_scores_mean_id
+
+#only ipsi
+in_out_scores_mean_id %>% filter(ipsi_contra == "ipsi") -> in_out_scores_mean_id_ipsi
 in_out_scores_mean %>% filter(ipsi_contra == "ipsi") -> in_out_scores_mean_ipsi
+
 in_out_scores_mean_ipsi_m <- tidyr::pivot_wider(in_out_scores_mean_ipsi[, c("input", "conn_score", "type")],
                                                 names_from = "input", values_from = "conn_score")
+in_out_scores_mean_id_ipsi_m <- tidyr::pivot_wider(in_out_scores_mean_id_ipsi[, c("input", "conn_score", "type")],
+                                                names_from = "input", values_from = "conn_score")
+
 in_out_scores_mean_ipsi_m <- as.matrix(in_out_scores_mean_ipsi_m[, -1])
+in_out_scores_mean_id_ipsi_m <- as.matrix(in_out_scores_mean_id_ipsi_m[, -1])
+in_out_scores_mean_id_ipsi_m[is.na(in_out_scores_mean_id_ipsi_m)]=0
 clust <- hclust(dist(t(in_out_scores_mean_ipsi_m)))
-my_cols_fun <- colorRampPalette(c("#3E1F4B", "#8B008B", "#F2F2F2"))
+clust_id <- hclust(dist(t(in_out_scores_mean_id_ipsi_m)))
+my_cols_fun <- colorRampPalette(c("#e76f51","#f4a261","#e9c46a",'#2a9d8f'))
 ```
 
-Plot a Heatmap
+## 4.2 Plot a Heatmap (per type)
 
 ```{r}
 figure_heatmap <- ggplot(as_tibble(in_out_scores_mean), aes(x = factor(type, level = output_order), y = input)) +
@@ -294,14 +345,34 @@ figure_heatmap <- ggplot(as_tibble(in_out_scores_mean), aes(x = factor(type, lev
   theme_minimal() +
   theme(legend.position = 'right', text = element_text(color = 'grey40')) +
   scale_size_area(max_size = 5) +
-  scale_colour_gradientn(colours = my_cols_fun(desired_layers), limits = c(1, desired_layers)) +
+  scale_colour_gradientn(colours = my_cols_fun(desired_layers), limits = c(1, desired_layers+1)) +
   scale_y_discrete(limits = colnames(in_out_scores_mean_ipsi_m)[clust$order]) +
   guides(colour = guide_legend(override.aes = list(size = 10))) +
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
         text = element_text(size = 14, family = "Arial"),
         axis.title.x = element_blank(),
         axis.title.y = element_blank())
+figure_heatmap
 ```
+## 4.3 Plot a Heatmap (by id)
+
+```{r}
+figure_heatmap <- ggplot(as_tibble(in_out_scores_mean_id), 
+                         aes(x = factor(type, level = unique(in_out_scores_mean_id$type)), y = input)) +
+  geom_point(aes(col = ds_layer, size = conn_score), shape = 15) +
+  theme_minimal() +
+  theme(legend.position = 'right', text = element_text(color = 'grey40')) +
+  scale_size_area(max_size = 5) +
+  scale_colour_gradientn(colours = my_cols_fun(desired_layers+1), limits = c(1, desired_layers+1)) +
+  scale_y_discrete(limits = colnames(in_out_scores_mean_id_ipsi_m)) +
+  guides(colour = guide_legend(override.aes = list(size = 10))) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+        text = element_text(size = 14, family = "Arial"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank())
+figure_heatmap
+```
+
 
 figure_heatmap
 
@@ -326,7 +397,7 @@ for (nth in 1:length(input_types)) {
     theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 10),
           panel.background = element_rect(fill = "white", colour = "black"),
           panel.grid = element_line(colour = "grey", linewidth = 0.2)) +
-    ylim(1, desired_layers) +
+    ylim(1, desired_layers+1) +
     facet_grid(. ~ factor(ipsi_contra, levels = c("ipsi", "contra")), scales = "fixed")
   
   legend <- cowplot::get_legend(
@@ -344,7 +415,7 @@ for (nth in 1:length(input_types)) {
   )
   figure2_nwh <- cowplot::plot_grid(title, legend, nrow = 1, rel_widths = c(1,1))
   figure3_nwh <- cowplot::plot_grid(figure2_nwh, figure_nwh, ncol = 1, rel_heights = c(0.1,1))
-  ggsave(paste0("output/", input_types[nth], "_combined_plot.pdf"),
+  ggsave(paste0("keffective_connectivity/", input_types[nth], "_combined_plot.pdf"),
          figure3_nwh, dev = cairo_pdf, width = 4715, height = 3295, units = "px")
 }
 ```
@@ -352,10 +423,11 @@ for (nth in 1:length(input_types)) {
 Conclusion
 
 This document demonstrates a full workflow for processing male CNS
-connectivity data. We: • Extract and preprocess connectivity and
-annotation data, • Normalize a large sparse connectivity matrix via
-efficient scaling, • Compute layer-based connectivity scores, • And
-visualize results using heatmaps and boxplots.
+connectivity data. We: 
+• Extract and preprocess connectivity andannotation data, 
+• Normalize a large sparse connectivity matrix via efficient scaling, 
+• Compute layer-based connectivity scores, 
+• And visualize results using heatmaps and boxplots.
 
 This report is intended to be reproducible and easily modifiable for
 further analysis. Enjoy the analysis!
