@@ -37,6 +37,7 @@ library(ggpubr)
 library(Matrix)
 library(cowplot)
 library(coconat)  # for partner_summary2adjacency_matrix (if available)
+library(coconatfly)
 ```
 
 #1 Data Extraction and Preprocessing
@@ -130,8 +131,24 @@ rm(query.ids2, conn_feather.inmem, conn_feather, mdf)
 ##2.1 Process Annotations
 ```{r}
 all_info <- mcns_body_annotations()
+all_info <- all_info %>%
+  mutate(
+    type = case_when(
+      grepl("putative_ppk23", receptor_type) ~ "m-cell",
+      grepl("putative_ppk25", receptor_type) ~ "f-cell",
+      TRUE ~ type
+    )
+  )
 
 input.cell_types <- c("SAD051_b","SAD051_a",'AVLP721m','(JO-B)')
+input.cell_types <- c("AN09B017","AN05B023",'AN05B102')
+#input.cell_types <- c('m-cell','f-cell')
+mf.downstream.ids <-all_info%>%filter(type %in% c('m-cell','f-cell'))%>%pull(bodyid)%>%unique()
+mf.downstream.top20 <- (mf.downstream.cfps %>%filter(!grepl('SN',type.post))%>%pull(type.post)%>%unique())[1:20]
+input.cell_types<- c(input.cell_types,mf.downstream.top20)
+
+mf.downstream.cfps <-cf_partner_summary(cf_ids(malecns=mf.downstream.ids),partners = 'o',threshold=5)
+all_info%>%filter(type %in% c('m-cell','f-cell'))%>%pull(bodyid)%>%unique()
 
 input_ids<-all_info%>%filter(type %in% input.cell_types)%>%pull(bodyid)%>%unique()
 input_info <- all_info[all_info$bodyid %in% input_ids, ]
@@ -142,7 +159,12 @@ input_info_sel$soma_or_root_side <- ifelse(!is.na(input_info_sel$soma_side) & in
                                             input_info_sel$root_side)
 
 
-output.cell_types <- c("pMP2","pIP10",'vpoEN','vpoIN')
+output.cell_types <- c("pMP2","pIP10",'vpoEN','vpoIN','AVLP721m')
+output.cell_types <- c("pIP10","pMP2")
+output.cell_types <- c(output.cell_types,all_info %>% filter(grepl('mAL_', type))%>%pull(type)%>%unique())
+output.cell_types <- c(output.cell_types,all_info %>% filter(grepl('P1_', type))%>%pull(type)%>%unique())
+#output.cell_types <- c(mf.downstream.top20)
+
 
 output_ids <- all_info%>%filter(type %in% output.cell_types)%>%pull(bodyid)%>%unique()
 
@@ -334,7 +356,7 @@ in_out_scores_mean_id_ipsi_m <- as.matrix(in_out_scores_mean_id_ipsi_m[, -1])
 in_out_scores_mean_id_ipsi_m[is.na(in_out_scores_mean_id_ipsi_m)]=0
 clust <- hclust(dist(t(in_out_scores_mean_ipsi_m)))
 clust_id <- hclust(dist(t(in_out_scores_mean_id_ipsi_m)))
-my_cols_fun <- colorRampPalette(c("#e76f51","#f4a261","#e9c46a",'#2a9d8f'))
+my_cols_fun <- colorRampPalette(c("purple","orange",'green'))
 ```
 
 ## 4.2 Plot a Heatmap (per type)
@@ -344,7 +366,7 @@ figure_heatmap <- ggplot(as_tibble(in_out_scores_mean), aes(x = factor(type, lev
   geom_point(aes(col = ds_layer, size = conn_score), shape = 15) +
   theme_minimal() +
   theme(legend.position = 'right', text = element_text(color = 'grey40')) +
-  scale_size_area(max_size = 5) +
+  scale_size_area(max_size = 10) +
   scale_colour_gradientn(colours = my_cols_fun(desired_layers), limits = c(1, desired_layers+1)) +
   scale_y_discrete(limits = colnames(in_out_scores_mean_ipsi_m)[clust$order]) +
   guides(colour = guide_legend(override.aes = list(size = 10))) +
@@ -364,13 +386,67 @@ figure_heatmap <- ggplot(as_tibble(in_out_scores_mean_id),
   theme(legend.position = 'right', text = element_text(color = 'grey40')) +
   scale_size_area(max_size = 5) +
   scale_colour_gradientn(colours = my_cols_fun(desired_layers+1), limits = c(1, desired_layers+1)) +
-  scale_y_discrete(limits = colnames(in_out_scores_mean_id_ipsi_m)) +
+  scale_y_discrete(limits = colnames(in_out_scores_mean_id_ipsi_m)[clust_id$order]) +
   guides(colour = guide_legend(override.aes = list(size = 10))) +
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
         text = element_text(size = 14, family = "Arial"),
         axis.title.x = element_blank(),
         axis.title.y = element_blank())
 figure_heatmap
+```
+## 4.4 Plot with dendrogram
+
+```{r}
+library(ggdendro)
+library(patchwork)
+library(ggplot2)
+
+
+
+
+# 1. compute clustering on your matrix
+clust <- hclust(dist(t(in_out_scores_mean_ipsi_m)))
+
+
+in_out_scores_mean_ipsi_m_norm <- apply(in_out_scores_mean_ipsi_m, 2, function(x) {
+  (x - min(x, na.rm=TRUE)) / (max(x, na.rm=TRUE) - min(x, na.rm=TRUE))
+})
+# preserve dimnames
+dimnames(in_out_scores_mean_ipsi_m_norm) <- dimnames(in_out_scores_mean_ipsi_m)
+in_out_scores_mean_ipsi_m_norm     <- scale(in_out_scores_mean_ipsi_m, center = TRUE, scale = TRUE)
+clust <- hclust(dist(t(in_out_scores_mean_ipsi_m_norm)))
+
+
+# 2. extract dendrogram data
+dd <- dendro_data(clust, type = "rectangle")
+
+# 3. build a horizontal dendrogram (root on left, leaves align with your rows)
+dendro_plot <- ggplot() +
+  geom_segment(data = segment(dd),
+               aes(x = y, y = x, xend = yend, yend = xend)) +
+  scale_y_continuous(breaks = seq_along(clust$order),
+                     labels = clust$labels[clust$order],
+                     expand = c(0,0)) +
+  scale_x_reverse(expand = c(0,0)) +
+  theme_void()
+
+# 4. your heatmap‐style tile plot, with inputs reordered by the same clustering
+tile_plot <- ggplot(as_tibble(in_out_scores_mean),
+                    aes(x = factor(type, levels = output_order),
+                        y = factor(input, levels = clust$labels[clust$order]))) +
+  geom_point(aes(col = ds_layer, size = conn_score),
+             shape = 15) +
+  scale_size_area(max_size = 10) +
+  scale_colour_gradientn(colours = my_cols_fun(desired_layers),
+                        limits = c(1, desired_layers + 1)) +
+  guides(colour = guide_legend(override.aes = list(size = 10))) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+        axis.title = element_blank(),
+        text = element_text(size = 14, family = "Arial"))
+
+# 5. combine them side by side
+dendro_plot + tile_plot + plot_layout(widths = c(1.5, 5))
 ```
 
 
