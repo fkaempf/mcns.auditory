@@ -144,11 +144,12 @@ input.cell_types <- c("SAD051_b","SAD051_a",'AVLP721m','(JO-B)')
 input.cell_types <- c("AN09B017","AN05B023",'AN05B102')
 #input.cell_types <- c('m-cell','f-cell')
 mf.downstream.ids <-all_info%>%filter(type %in% c('m-cell','f-cell'))%>%pull(bodyid)%>%unique()
+mf.downstream.cfps <-cf_partner_summary(cf_ids(malecns=mf.downstream.ids),partners = 'o',threshold=5)
 mf.downstream.top20 <- (mf.downstream.cfps %>%filter(!grepl('SN',type.post))%>%pull(type.post)%>%unique())[1:20]
 input.cell_types<- c(input.cell_types,mf.downstream.top20)
 
-mf.downstream.cfps <-cf_partner_summary(cf_ids(malecns=mf.downstream.ids),partners = 'o',threshold=5)
-all_info%>%filter(type %in% c('m-cell','f-cell'))%>%pull(bodyid)%>%unique()
+
+
 
 input_ids<-all_info%>%filter(type %in% input.cell_types)%>%pull(bodyid)%>%unique()
 input_info <- all_info[all_info$bodyid %in% input_ids, ]
