@@ -492,7 +492,7 @@ for (nth in 1:length(input_types)) {
   )
   figure2_nwh <- cowplot::plot_grid(title, legend, nrow = 1, rel_widths = c(1,1))
   figure3_nwh <- cowplot::plot_grid(figure2_nwh, figure_nwh, ncol = 1, rel_heights = c(0.1,1))
-  ggsave(paste0("keffective_connectivity/", input_types[nth], "_combined_plot.pdf"),
+  ggsave(paste0("k.effective.connectivity.plots/", input_types[nth], "_combined_plot.pdf"),
          figure3_nwh, dev = cairo_pdf, width = 4715, height = 3295, units = "px")
 }
 ```
