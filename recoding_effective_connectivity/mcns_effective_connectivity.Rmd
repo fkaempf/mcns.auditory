@@ -243,13 +243,13 @@ diversity <- 'otheredges'  # othernodes,otheredges,none
 cell_types <- c('CB1076','CB1078', 'CB3710', 'CB2521','CB1542', 'CB1038', 'CB1427', 'CB2556a', 'CB2380') #all
 cell_types <- c('(JO-B)') #only JO-B
 
-cell_types <- c('f-cell','m-cell','AN09B017','AN05B102')
+#cell_types <- c('f-cell','m-cell','AN09B017','AN05B102')
 #cell_types <- c('CB1542','CB1078')
 
 target_cells <- c("vpoEN",'CB1385',"vpoEN",'CB1385')  # List of target cells
 target_cells <- c(target_cells,'pMP2')
 target_cells <- c(target_cells,mba%>% filter(grepl('aSP-k',synonyms))%>%filter(!is.na(type))%>%pull(type)%>%unique())
-target_cells <- c('pIP10','pMP2')
+#target_cells <- c('pIP10','pMP2')
 
 for (tc in target_cells){
   for (lr in c('_L','_R','_NA')){
@@ -404,7 +404,7 @@ try(g.sub.prout.mcns <- delete_edges(g.sub.prout.mcns, edges_to_delete),silent=T
 
 node_names <- V(g.sub.prout.mcns)$name
 #distance_to_JO_B <- shortest.paths(g.sub.prout.mcns, to = V(g.sub.prout.mcns)[name == "(JO-B)_NA"], weights = NA)
-#distance_to_JO_B <- shortest.paths(g.sub.prout.mcns, to = V(g.sub.prout.mcns)[name == "(JO-B)"], weights = NA)
+distance_to_JO_B <- shortest.paths(g.sub.prout.mcns, to = V(g.sub.prout.mcns)[name == "(JO-B)"], weights = NA)
 V(g.sub.prout.mcns)$distance_to_JO_B <- ifelse(node_names == "(JO-B)_NA", 0, as.integer(distance_to_JO_B))
 V(g.sub.prout.mcns)$distance_to_JO_B <- ifelse(node_names == "(JO-B)", 0, as.integer(distance_to_JO_B))
 
