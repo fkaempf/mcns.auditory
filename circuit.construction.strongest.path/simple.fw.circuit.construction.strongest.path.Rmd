@@ -1,0 +1,469 @@
+Imports
+```{r}
+library(malecns)
+library(coconatfly)
+library(fafbseg)
+library(neuprintr)
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(plotly)
+library(stringr)
+library(igraph)
+library(tidygraph)
+library(ggraph)
+library(jsonlite)
+library(ggplot2)
+library(reshape2)
+library(bit64)
+library(reticulate)
+fafbseg::flywire_connectome_data("syn")
+library(Matrix)
+```
+
+```{r setup, include=FALSE}
+# Setup knitr global options for clean rendering and consistent figures
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = 'center',
+  fig.width = 8,
+  fig.height = 6
+)
+```
+
+
+## 1 Load data
+
+### 1.1 Load male boday annotations
+```{r}
+synapse_threshold=5
+mba<-mcns_body_annotations()
+mba.static<-mcns_body_annotations()
+mba<-mba%>%mutate(type=ifelse(type=='',NA,type))
+mba <- mba %>%
+  mutate(
+    type = case_when(
+      grepl("putative_ppk23", receptor_type) ~ "m-cell",
+      grepl("putative_ppk25", receptor_type) ~ "f-cell",
+      TRUE ~ type
+    )
+  )%>%
+  mutate(cachero.type = str_extract(synonyms, "(?<=Cachero 2010:)[^;]+") %>%
+                            str_trim())
+flytable<-flytable_query("select * from info")%>%
+  mutate(cell_type=coalesce(malecns_type,cell_type,hemibrain_type,cb_type))
+flytable.sub <- flytable%>%
+  select(cell_type,malecns_type,notes,morphology_group,dimorphism,matching_notes,supertype,synonyms)
+
+```
+
+
+
+
+## 2 Adjacency matrix
+### 2.1 Function adjacency matrix
+```{r}
+calculate_normed_adj_matrix <-function(connectivity,cell.or.type='type',pre.or.post='pre'){
+  colScale <- function(A, na.rm = TRUE) {
+    scalefac <- 1 / Matrix::colSums(A)
+    if (na.rm) scalefac[!is.finite(scalefac)] <- 0
+    B <- A %*% Matrix::Diagonal(x = scalefac)
+    B
+    }
+  rowScale <- function(A, na.rm = TRUE) {
+    scalefac <- 1 / Matrix::rowSums(A)
+    if (na.rm) scalefac[!is.finite(scalefac)] <- 0
+    B <- Matrix::Diagonal(x = scalefac) %*% A
+    B
+    }
+  if(cell.or.type=='cell'){
+    unique.identifier <- union(as.character(connectivity$pre_id), as.character(connectivity$post_id))
+    adj.matrix <- sparseMatrix(
+      i = match(connectivity$pre_id, unique.identifier),
+      j = match(connectivity$post_id, unique.identifier),
+      x = connectivity$weight,
+      dims = c(length(unique.identifier), length(unique.identifier)),
+      dimnames = list(unique.identifier, unique.identifier))
+  }else{
+    unique.identifier <- union(connectivity$pre_type, connectivity$post_type)
+    adj.matrix <- sparseMatrix(
+      i = match(connectivity$pre_type, unique.identifier),
+      j = match(connectivity$post_type, unique.identifier),
+      x = connectivity$weight,
+      dims = c(length(unique.identifier), length(unique.identifier)),
+      dimnames = list(unique.identifier, unique.identifier))
+  }
+  if(pre.or.post=='pre'){
+    adj.matrix.normed.pre <- rowScale(adj.matrix)
+    colnames(adj.matrix.normed.pre) <- colnames(adj.matrix)
+    rownames(adj.matrix.normed.pre) <- rownames(adj.matrix)
+    return(adj.matrix.normed.pre)
+  }else if(pre.or.post=='avg'){
+    adj.matrix.normed.post <- colScale(adj.matrix)
+    colnames(adj.matrix.normed.post) <- colnames(adj.matrix)
+    rownames(adj.matrix.normed.post) <- rownames(adj.matrix)
+    adj.matrix.normed.pre <- rowScale(adj.matrix)
+    colnames(adj.matrix.normed.pre) <- colnames(adj.matrix)
+    rownames(adj.matrix.normed.pre) <- rownames(adj.matrix)
+    
+    return(avg_mat <- (adj.matrix.normed.post + adj.matrix.normed.post) / 2)
+    
+  }
+  
+  else{
+    adj.matrix.normed.post <- colScale(adj.matrix)
+    colnames(adj.matrix.normed.post) <- colnames(adj.matrix)
+    rownames(adj.matrix.normed.post) <- rownames(adj.matrix)
+    return(adj.matrix.normed.post)
+  }
+}
+```
+
+### 2.1 Create adjacency matrix
+```{r}
+flytable <- flytable_query("select * from info")
+fw.ids <- flytable%>%pull(root_id)%>%unique()
+  
+conn <- cf_partners(cf_ids(flywire = fw.ids),
+                              partners = 'o',
+                              threshold = synapse_threshold)
+
+#here is the list of fusing the synonyms into the ytpes in mba before transfering via  flywire_type the names
+mcns.ignorelist <- c('vpoIN','vpoEN','pIP10','AVLP761m','AVLP761m','AVLP762m','AVLP763m')
+fw.ignorelist <- c('CB1078','CB1542')
+mba2fwtype < mba %>%
+  
+
+conn<-conn%>%
+  mutate(type=coalesce(malecns_type,type,hemibrain_type))%>%
+  left_join(flytable%>%
+              select(root_id,synonyms)%>%
+              rename(pre_id=root_id)%>%
+              mutate(pre_id=as.integer64(pre_id),by='pre_id'))%>%
+  left_join(flytable%>%
+              select(root_id,synonyms)%>%
+              rename(post_id=root_id)%>%
+              mutate(post_id=as.integer64(post_id)),by='post_id')
+
+vPN1.ids  <- mba %>% filter(str_detect(synonyms, 'vPN1')) %>% pull(bodyid)
+aPN1.ids  <- mba %>% filter(str_detect(synonyms, 'aPN1')) %>% pull(bodyid)
+vpoEN.ids <- mba %>% filter(str_detect(type, 'vpoEN'))    %>% pull(bodyid)
+vpoIN.ids <- mba %>% filter(str_detect(type, 'vpoIN'))    %>% pull(bodyid)
+pIP10.ids <- mba %>% filter(str_detect(type, 'pIP10'))    %>% pull(bodyid)
+pMP2.ids  <- mba %>% filter(str_detect(type, 'pMP2'))     %>% pull(bodyid)
+aPN1.types <- mba %>% filter(bodyid %in% aPN1.ids,!is.na(type)) %>% pull(type) %>% unique()
+aPN1.groups <- mba %>% filter(bodyid %in% aPN1.ids) %>% pull(group) %>% unique()
+aPN1_like.ids <- mba %>% filter(type %in% aPN1.types | group %in% aPN1.groups) %>% filter(!str_detect(synonyms, 'aPN1')) %>% pull(bodyid)
+all.P1.type <- mba%>%filter(grepl('^P1_',type))%>%pull(type)%>%unique()
+
+
+conn <- conn %>%
+  mutate(
+    pre_type = case_when(
+      pre_id %in% vPN1.ids ~ 'vPN1',
+      pre_id %in% aPN1.ids ~ 'aPN1',
+      pre_id %in% aPN1_like.ids ~ 'aPN1_like',
+      pre_id %in% vpoEN.ids ~ 'vpoEN',
+      pre_id %in% vpoIN.ids ~ 'vpoIN',
+      pre_id %in% pIP10.ids ~ 'pIP10',
+      pre_id %in% pMP2.ids ~ 'pMP2',
+      TRUE ~ pre_type
+    ),
+    post_type = case_when(
+      post_id %in% vPN1.ids ~ 'vPN1',
+      post_id %in% aPN1.ids ~ 'aPN1',
+      post_id %in% aPN1_like.ids ~ 'aPN1_like',
+      post_id %in% vpoEN.ids ~ 'vpoEN',
+      post_id %in% vpoIN.ids ~ 'vpoIN',
+      post_id %in% pIP10.ids ~ 'pIP10',
+      post_id %in% pMP2.ids ~ 'pMP2',
+      TRUE ~ post_type
+    )
+  )%>%
+  mutate(
+    pre_type = case_when(
+      !pre_type %in% c('vPN1','aPN1','vpoEN','vpoIN','pIP10','pMP2','aPN1_like',all.P1.type)&!is.na(pre.cachero.type)~pre.cachero.type,
+      TRUE ~ pre_type
+    ),
+    post_type = case_when(
+      !post_type %in% c('vPN1','aPN1','vpoEN','vpoIN','pIP10','pMP2','aPN1_like',all.P1.type)&!is.na(post.cachero.type)~post.cachero.type,
+      TRUE ~ post_type
+    )
+  )
+  
+```
+/Users/fkampf/Documents/mcns.paper/2022malecns/matches_mcns_left_right.feather
+
+get types and assign them
+```{r}
+library(arrow)
+conn.wtype<- conn%>%
+  left_join(flytable%>%
+              select(cell_type,root_id)%>%
+              mutate(root_id=as.integer64(root_id))%>%
+              rename(pre_id=root_id,pre_type=cell_type),
+            by='pre_id')%>%
+  left_join(flytable%>%
+              select(cell_type,root_id)%>%
+              mutate(root_id=as.integer64(root_id))%>%
+              rename(post_id=root_id,post_type=cell_type),
+            by='post_id')  
+
+
+
+```
+
+
+
+create matrix
+
+```{r}
+nam <-calculate_normed_adj_matrix(conn.wtype,cell.or.type='type',pre.or.post='avg') #avg
+
+nam_thresholded <-nam
+
+g.prout.mcns <- graph_from_adjacency_matrix(
+  nam_thresholded,
+  mode = "directed",
+  weighted = TRUE,
+  diag = FALSE
+)
+```
+
+
+
+path finding new
+
+
+```{r}
+
+# Define parameters for path search
+n_paths <-  4       # Number of strongest paths to find for each start-target pair
+diversity <- 'otheredges'  # othernodes,otheredges,none
+
+cell_types <- c('CB1076','CB1078', 'CB3710', 'CB2521','CB1542', 'CB1038', 'CB1427', 'CB2556a', 'CB2380') #all
+cell_types <- c('aPN1','vPN1','JO-B') #only JO-B
+
+#cell_types <- c('f-cell','m-cell','AN09B017','AN05B102')
+#cell_types <- c('CB1542','CB1078')
+#cell_types <- start_types
+
+target_cells <- c("vpoEN",'CB1385','CB1385')  # List of target cells
+target_cells <- c(target_cells,'pMP2')
+target_cells <- c(target_cells,mba%>% filter(grepl('aSP-k',synonyms))%>%filter(!is.na(type))%>%pull(type)%>%unique())
+#target_cells <- c('pIP10','pMP2')
+target_cells <- c(target_cells,'vPN1','aPN1','aPN1_like','vpoEN','vpoIN','pIP10','pMP2','aSP-k','pIP-e')
+target_cells <- c("vpoEN",'CB1385','aSP-k')
+
+
+
+#target_cells <- c(target_cells,V(g.prout.mcns)$name[grepl("P1_", V(g.prout.mcns)$name)])
+#target_cells <- c(all.levels.prout.mcns.output%>%filter((post_type=='vpoEN')&(weight>=0.1))%>%pull(pre_type)%>%unique(),target_cells)
+
+# Transform weights using log
+E(g.prout.mcns)$log_weight <- -log(E(g.prout.mcns)$weight)  # Negate to convert to shortest path problem
+
+
+
+# Initialize an empty list to store results and a vector for important nodes
+results <- list()
+all_important_nodes <- character()
+
+# Loop over all start (cell_types) and target (target_cells) pairs
+for (start in cell_types) {
+  for (end in target_cells) {
+
+    # Only process if both start and end exist in the graph
+    if ((start %in% V(g.prout.mcns)$name) && (end %in% V(g.prout.mcns)$name)) {
+
+      # Make a copy of the graph to modify iteratively
+      g_temp <- g.prout.mcns
+      
+      # List to hold all paths for this start–end pair
+      pair_paths <- list()
+      
+      # Find up to 'n_paths' for the given pair
+      for (i in 1:n_paths) {
+        # Compute shortest path (using negative log weights so that lower is stronger)
+        path_result <- shortest_paths(g_temp, from = start, to = end,
+                                      weights = E(g_temp)$log_weight,
+                                      output = "both")
+        
+        # Check if a path was found
+        if (length(path_result$vpath[[1]]) > 0) {
+          path_nodes <- path_result$vpath[[1]]
+          path_edges <- path_result$epath[[1]]
+          # Convert back to strength: reverse the -log transform
+          final_strength <- exp(-sum(E(g_temp)[path_edges]$log_weight))
+          
+          # Save the results; note that we display the path using the names from the original graph
+          pair_paths[[paste0("path", i)]] <- list(
+            start = start,
+            end = end,
+            path = paste(V(g.prout.mcns)[path_nodes]$name, collapse = " -> "),
+            strength = final_strength
+          )
+          # Collect nodes from this path into the overall list
+          all_important_nodes <- c(all_important_nodes, V(g.prout.mcns)[path_nodes]$name)
+          
+          # Modify the temporary graph to seek a different path next time
+          if (diversity=='othernodes') {
+            # Remove intermediate nodes (all nodes except the start and end)
+            intermediate_nodes <- V(g.prout.mcns)[path_nodes]$name  # get names from the original graph
+            nodes_to_remove <- setdiff(intermediate_nodes, c(start, end))
+            if (length(nodes_to_remove) > 0) {
+              g_temp <- delete_vertices(g_temp, nodes_to_remove)
+            }
+          } else if(diversity=='otheredges'){
+            # Remove the edges used in this path so that the next path will be different
+            g_temp <- delete_edges(g_temp, path_edges)
+          }else{
+            1+1
+          }
+            
+        } else {
+          # If no further path is found, break out of the inner loop
+          break
+        }
+      }
+      # Save all the paths found for this start–end pair into the results list
+      results[[paste(start, end, sep = "->")]] <- pair_paths
+    } else {
+      # If either node doesn't exist, store an NA entry for this pair
+      results[[paste(start, end, sep = "->")]] <- list(list(
+        start = start,
+        end = end,
+        path = NA,
+        strength = NA
+      ))
+    }
+  }
+}
+
+# Flatten the nested results list into a single data frame for easier inspection:
+results_df <- do.call(rbind, lapply(results, function(pair_list) {
+  do.call(rbind, lapply(pair_list, function(r) {
+    data.frame(
+      start = r$start,
+      end = r$end,
+      path = r$path,
+      strength = r$strength,
+      stringsAsFactors = FALSE
+    )
+  }))
+}))
+
+# (Optional) Get unique important nodes encountered in all the paths:
+all_important_nodes <- unique(all_important_nodes)
+results_df_wo_na <- results_df%>%
+  filter(!is.na(strength))
+# Look at the results
+print(results_df_wo_na)
+```
+
+
+
+
+
+
+Open graph in RCy3
+
+```{r}
+library(RCy3)
+library(dplyr)
+library(stringr)
+
+# Define nodes of interest
+nodes_to_keep <- c("JO-B", "JO-B", "CB1078", "CB1542", "CB2108", "CB1383", "CB1066,CB3649",
+                   "CB2364", "CB3382", "PVLP033", "CB3162", "CB3382", "vpoEN", "SIP124m",
+                   "AVLP721m", "AVLP299_c", "DNp55", "CB1385", "AVLP711m", "SIP108m", 
+                   "SIP120m", "SIP116m", "SIP114m", "PVLP211m", "pMP2", "AVLP744m")
+nodes_to_keep <- c(nodes_to_keep, unique(all_important_nodes))
+
+in.plots <- c("vPN1", "aPN1", "aPN1_like", "vpoEN", "vpoIN", "pIP10", "pMP2", "JO-B")
+P1_2_add <- conn.wtype%>%
+  filter(pre_type %in% nodes_to_keep,
+         grepl("^P1_", post_type))%>%
+  pull(post_type)%>%
+  unique()
+nodes_to_keep <- c(unique(all_important_nodes), in.plots)
+
+
+
+conn
+# Subset the graph
+g.sub.prout.mcns <- induced_subgraph(g.prout.mcns, vids = V(g.prout.mcns)[name %in% nodes_to_keep])
+
+# Shortest path distances from start_types
+node_names <- V(g.sub.prout.mcns)$name
+distance_to_start <- shortest.paths(g.sub.prout.mcns, to = V(g.sub.prout.mcns)[name %in% cell_types], weights = NA)
+V(g.sub.prout.mcns)$distance_to_start <- ifelse(node_names %in% start_types, 0, as.integer(distance_to_start))
+
+# FRU/DSX metadata
+try(fru_dsx_values <- conn %>%
+      group_by(pre_type, post_type) %>%
+      mutate(pre_fru_dsx = !is.na(pre_fru_dsx),
+             post_fru_dsx = !is.na(post_fru_dsx)) %>%
+      summarize(pre_fru_dsx = first(pre_fru_dsx),
+                post_fru_dsx = first(post_fru_dsx)) %>%
+      ungroup() %>%
+      pivot_longer(cols = c(pre_fru_dsx, post_fru_dsx, pre_type, post_type),
+                   names_to = c("side", ".value"), names_sep = "_") %>%
+      select(-side) %>% distinct())
+
+
+
+# Match metadata to vertices
+try(nt_for_vertices <- nt_values$nt[match(V(g.sub.prout.mcns)$name, nt_values$type)])
+try(fru_dsx_for_vertices <- fru_dsx_values$fru[match(V(g.sub.prout.mcns)$name, fru_dsx_values$type)])
+V(g.sub.prout.mcns)$nt <- nt_for_vertices
+try(V(g.sub.prout.mcns)$fru_dsx <- fru_dsx_for_vertices)
+
+# P1-P1 flag
+el <- as_edgelist(g.sub.prout.mcns)
+is_p1p1 <- grepl("^P1_", el[, 1])
+E(g.sub.prout.mcns)$is_p1_p1 <- is_p1p1
+
+# Scale weights
+E(g.sub.prout.mcns)$weight <- E(g.sub.prout.mcns)$weight * 100
+
+# --- Dynamic quantile-based binning for weights > 1 ---
+weights_all <- E(g.sub.prout.mcns)$weight
+weights_above_1 <- weights_all[weights_all > 1]
+
+# Compute quantiles and round nicely for legend clarity
+quantile_breaks <- quantile(weights_above_1, probs = c(0, 0.25, 0.5, 0.75, 1), na.rm = TRUE)
+rounded_breaks <- unique(round(quantile_breaks))  # ensure no duplicated breaks
+
+# Handle edge case: fewer than 5 unique bins
+if (length(rounded_breaks) < 5) {
+  rounded_breaks <- pretty(weights_above_1, n = 4)
+}
+
+# Assign bin index
+E(g.sub.prout.mcns)$arrow_class <- cut(
+  weights_all,
+  breaks = rounded_breaks,
+  include.lowest = TRUE,
+  labels = FALSE
+)
+
+# Optional: create human-readable bin label
+labels <- paste(head(rounded_breaks, -1), tail(rounded_breaks, -1), sep = "–")
+E(g.sub.prout.mcns)$arrow_class_label <- labels[E(g.sub.prout.mcns)$arrow_class]
+
+# Assign 0 and "0" for weights <= 1
+
+E(g.sub.prout.mcns)$arrow_class[weights_all <= 1] <- 0
+E(g.sub.prout.mcns)$arrow_class_label[weights_all <= 1] <- "≤1"
+
+# Create network in Cytoscape
+RCy3::createNetworkFromIgraph(g.sub.prout.mcns)
+
+# Plot kernel density estimate in base R
+d <- density(weights_above_1)
+plot(d, main = "KDE Plot of Weights", xlab = "Weight", ylab = "Density")
+```

@@ -18,6 +18,7 @@ library(igraph)
 library(fafbseg)
 library(tidygraph)
 library(ggraph)
+library(jsonlite)
 synapse_threshold=5
 mba<-mcns_body_annotations()
 mba.type.coalesced <-  mba %>%
@@ -25,8 +26,11 @@ mba.type.coalesced <-  mba %>%
                          flywire_type, 
                          hemibrain_type, 
                          manc_type))
-flytable<-flytable_query("select * from info")
+flytable<-flytable_query("SELECT * FROM info")
 ```
+
+
+
 
 Create a graph of 4 layers and then find the strongest path from sink to sink
 
