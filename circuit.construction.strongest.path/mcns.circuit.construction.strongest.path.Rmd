@@ -18,8 +18,8 @@ library(ggplot2)
 library(reshape2)
 library(Matrix)
 
-conna = neuprint_login(dataset='male-cns:v0.8',server='https://neuprint-cns.janelia.org/')
-mcns.rois = neuprint_ROIs(dataset = 'male-cns:v0.8')
+conna = neuprint_login(dataset='male-cns:v0.9',server='https://neuprint-cns.janelia.org/')
+mcns.rois = neuprint_ROIs(dataset = 'male-cns:v0.9')
 neuprint_get_synapses(13693,roi='VNC')
 ```
 
@@ -70,11 +70,13 @@ fetch_connectivity <- function(synapse_threshold = 5) {
   connectivity <- connectivity %>%
     left_join(mba %>%
                 select("type", "bodyid",'fru_dsx','consensus_nt','flywire_type','synonyms','receptor_type','cachero.type') %>%
+                mutate(bodyid=as.integer(bodyid))%>%
                 rename(pre_type = type,pre_fru_dsx=fru_dsx,pre_nt=consensus_nt,pre_fw_type=flywire_type,pre_synonyms=synonyms,pre_receptor_type=receptor_type,pre.cachero.type=cachero.type),
               by = c('pre_id'='bodyid'))%>%
     rename(post_type = type)%>%
     left_join(mba %>%
                 select("bodyid",'fru_dsx','consensus_nt','flywire_type','synonyms','receptor_type','cachero.type') %>%
+                mutate(bodyid=as.integer(bodyid))%>%
                 rename(post_fru_dsx=fru_dsx,post_nt=consensus_nt,post_fw_type=flywire_type,post_synonyms=synonyms,post_receptor_type=receptor_type,post.cachero.type=cachero.type),
               by = c('post_id'='bodyid'))
   return(connectivity)
@@ -260,27 +262,18 @@ path finding new
 ```{r}
 
 # Define parameters for path search
-n_paths <-  5       # Number of strongest paths to find for each start-target pair
+n_paths <-  3       # Number of strongest paths to find for each start-target pair
 diversity <- 'otheredges'  # othernodes,otheredges,none
 
-cell_types <- c('CB1076','CB1078', 'CB3710', 'CB2521','CB1542', 'CB1038', 'CB1427', 'CB2556a', 'CB2380') #all
 cell_types <- c('aPN1','vPN1','JO-B') #only JO-B
 
-#cell_types <- c('f-cell','m-cell','AN09B017','AN05B102')
-#cell_types <- c('CB1542','CB1078')
-#cell_types <- start_types
 
-target_cells <- c("vpoEN",'CB1385',"vpoEN",'CB1385')  # List of target cells
+target_cells <- c("vpoEN",'CB1385','CB1385')  # List of target cells
 target_cells <- c(target_cells,'pMP2')
 target_cells <- c(target_cells,mba%>% filter(grepl('aSP-k',synonyms))%>%filter(!is.na(type))%>%pull(type)%>%unique())
-#target_cells <- c('pIP10','pMP2')
 target_cells <- c(target_cells,'vPN1','aPN1','aPN1_like','vpoEN','vpoIN','pIP10','pMP2','aSP-k','pIP-e')
-target_cells <- c('pMP2','pIP10')
 
 
-
-#target_cells <- c(target_cells,V(g.prout.mcns)$name[grepl("P1_", V(g.prout.mcns)$name)])
-#target_cells <- c(all.levels.prout.mcns.output%>%filter((post_type=='vpoEN')&(weight>=0.1))%>%pull(pre_type)%>%unique(),target_cells)
 
 # Transform weights using log
 E(g.prout.mcns)$log_weight <- -log(E(g.prout.mcns)$weight)  # Negate to convert to shortest path problem
@@ -400,7 +393,6 @@ nodes_to_keep <- c("JO-B", "JO-B", "CB1078", "CB1542", "CB2108", "CB1383", "CB10
                    "CB2364", "CB3382", "PVLP033", "CB3162", "CB3382", "vpoEN", "SIP124m",
                    "AVLP721m", "AVLP299_c", "DNp55", "CB1385", "AVLP711m", "SIP108m", 
                    "SIP120m", "SIP116m", "SIP114m", "PVLP211m", "pMP2", "AVLP744m")
-nodes_to_keep <- c(nodes_to_keep, unique(all_important_nodes))
 
 in.plots <- c("vPN1", "aPN1", "aPN1_like", "vpoEN", "vpoIN", "pIP10", "pMP2", "JO-B")
 P1_2_add <- conn%>%
@@ -408,16 +400,17 @@ P1_2_add <- conn%>%
          grepl("^P1_", post_type))%>%
   pull(post_type)%>%
   unique()
+
+
 nodes_to_keep <- c(unique(all_important_nodes), in.plots,P1_2_add)
-nodes_to_keep <- c('aIP-c','pIP-e','aSP22',
-                   'aSP-a','pMP2','dPR1',
-                   'dMS9','vMs-m','IN06B003',
-                   'AN08B074','pIP10','dMS2',
-                   'DNp13','DNp36','P1_14a',
-                   'TN1a','vPR9','pIP-h','vpoIN','vpoEN')
-nodes_to_keep <- c(nodes_to_keep,conn%>%filter(post_type=='IN06B003')%>%filter(grepl('SN',pre_type))%>%pull(pre_type)%>%unique())
-nodes_to_keep <- c(nodes_to_keep,mba%>%filter(grepl('TN1a',type))%>%pull(type)%>%unique())
-nodes_to_keep <- c(nodes_to_keep,in.plots,mba%>%filter(grepl('vPR9',type))%>%pull(type)%>%unique())
+nodes_to_keep <- c(unique(all_important_nodes))
+nodes_to_keep <- c('pMP2','aPN1_like','pIP10','aIP-g','aDT-e','pIP-e','vpoEN','aPN1','P1_14a','JO-B','WED118','aDT-g','aSP-a','aSP-k','vpoIN','vPN1')
+
+
+
+#nodes_to_keep <- c(nodes_to_keep,conn%>%filter(post_type=='IN06B003')%>%filter(grepl('SN',pre_type))%>%pull(pre_type)%>%unique())
+#nodes_to_keep <- c(nodes_to_keep,mba%>%filter(grepl('TN1a',type))%>%pull(type)%>%unique())
+#nodes_to_keep <- c(nodes_to_keep,in.plots,mba%>%filter(grepl('vPR9',type))%>%pull(type)%>%unique())
 
 
 
@@ -427,7 +420,7 @@ g.sub.prout.mcns <- induced_subgraph(g.prout.mcns, vids = V(g.prout.mcns)[name %
 # Shortest path distances from start_types
 node_names <- V(g.sub.prout.mcns)$name
 distance_to_start <- shortest.paths(g.sub.prout.mcns, to = V(g.sub.prout.mcns)[name %in% cell_types], weights = NA)
-V(g.sub.prout.mcns)$distance_to_start <- ifelse(node_names %in% start_types, 0, as.integer(distance_to_start))
+V(g.sub.prout.mcns)$distance_to_start <- ifelse(node_names %in% cell_types, 0, as.integer(distance_to_start))
 
 # FRU/DSX metadata
 try(fru_dsx_values <- conn %>%
@@ -498,8 +491,10 @@ E(g.sub.prout.mcns)$arrow_class_label[weights_all <= 1] <- "≤1"
 
 # Create network in Cytoscape
 RCy3::createNetworkFromIgraph(g.sub.prout.mcns)
+```
 
 
+```{r}
 # Plot kernel density estimate in base R
 d <- density(weights_above_1)
 plot(d, main = "KDE Plot of Weights", xlab = "Weight", ylab = "Density")
