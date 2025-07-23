@@ -55,6 +55,7 @@ mba <- mba %>%
                             str_trim())
 flytable<-flytable_query("select * from info")
 
+
 ```
 
 load schlegel matching
@@ -109,6 +110,7 @@ vpoEN.ids <- mba %>% filter(str_detect(type, 'vpoEN'))    %>% pull(bodyid)
 vpoIN.ids <- mba %>% filter(str_detect(type, 'vpoIN'))    %>% pull(bodyid)
 pIP10.ids <- mba %>% filter(str_detect(type, 'pIP10'))    %>% pull(bodyid)
 pMP2.ids  <- mba %>% filter(str_detect(type, 'pMP2'))     %>% pull(bodyid)
+
 aPN1.types <- mba %>% filter(bodyid %in% aPN1.ids,!is.na(type)) %>% pull(type) %>% unique()
 aPN1.groups <- mba %>% filter(bodyid %in% aPN1.ids) %>% pull(group) %>% unique()
 aPN1_like.ids <- mba %>% filter(type %in% aPN1.types | group %in% aPN1.groups) %>% filter(!str_detect(synonyms, 'aPN1')) %>% pull(bodyid)
@@ -290,10 +292,11 @@ aPN1.types <- mba %>% filter(bodyid %in% aPN1.ids,!is.na(type)) %>% pull(type) %
 aPN1.groups <- mba %>% filter(bodyid %in% aPN1.ids) %>% pull(group) %>% unique()
 aPN1_like.ids <- mba %>% filter(type %in% aPN1.types | group %in% aPN1.groups) %>% filter(!str_detect(synonyms, 'aPN1')) %>% pull(bodyid)
 all.P1.type <- mba%>%filter(grepl('^P1_',type))%>%pull(type)%>%unique()
+all.P1.type <- mba%>%filter(grepl('^P1_',type))%>%pull(type)%>%unique()
 
 
-
-
+#flytable%>%filter(if_any(.cols = everything(),~grepl('vpoEN',.)))
+conn%>%filter(if_any(.cols = everything(),~grepl('vpoIN',.)))%>%View()
 
 
 nam <-calculate_normed_adj_matrix(conn,cell.or.type='type',pre.or.post='avg') #avg
@@ -316,26 +319,14 @@ path finding new
 ```{r}
 
 # Define parameters for path search
-n_paths <-  4       # Number of strongest paths to find for each start-target pair
+n_paths <-  3       # Number of strongest paths to find for each start-target pair
 diversity <- 'otheredges'  # othernodes,otheredges,none
 
-cell_types <- c('CB1076','CB1078', 'CB3710', 'CB2521','CB1542', 'CB1038', 'CB1427', 'CB2556a', 'CB2380') #all
-cell_types <- c('aPN1','vPN1','JO-B') #only JO-B
-
-#cell_types <- c('f-cell','m-cell','AN09B017','AN05B102')
-#cell_types <- c('CB1542','CB1078')
-#cell_types <- start_types
-
-target_cells <- c("vpoEN",'CB1385',"vpoEN",'CB1385')  # List of target cells
-target_cells <- c(target_cells,'pMP2')
+cell_types <- c('aPN1','vPN1','JO-B','CB2108','CB1078','CB1076') #only JO-B
+target_cells <- c("vpoEN",'CB1385','pMP2','vPN1','aPN1','aPN1_like','vpoEN','vpoIN','pIP10','pMP2','aSP-k','pIP-e')  # List of target cells
 target_cells <- c(target_cells,mba%>% filter(grepl('aSP-k',synonyms))%>%filter(!is.na(type))%>%pull(type)%>%unique())
-#target_cells <- c('pIP10','pMP2')
-target_cells <- c(target_cells,'vPN1','aPN1','aPN1_like','vpoEN','vpoIN','pIP10','pMP2','aSP-k','pIP-e')
-
-
-
-#target_cells <- c(target_cells,V(g.prout.mcns)$name[grepl("P1_", V(g.prout.mcns)$name)])
-#target_cells <- c(all.levels.prout.mcns.output%>%filter((post_type=='vpoEN')&(weight>=0.1))%>%pull(pre_type)%>%unique(),target_cells)
+#cell_types <- c('JO-B')
+#target_cells <- c('vpoIN')
 
 # Transform weights using log
 E(g.prout.mcns)$log_weight <- -log(E(g.prout.mcns)$weight)  # Negate to convert to shortest path problem
@@ -551,3 +542,5 @@ RCy3::createNetworkFromIgraph(g.sub.prout.mcns)
 d <- density(weights_above_1)
 plot(d, main = "KDE Plot of Weights", xlab = "Weight", ylab = "Density")
 ```
+
+

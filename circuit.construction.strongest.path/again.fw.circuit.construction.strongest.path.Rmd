@@ -1,5 +1,27 @@
 Imports
 ```{r}
+
+# 0) (Re)start R so nothing Python‐side has already been loaded.
+
+# 1) Force the exact Python you want
+Sys.setenv(
+  RETICULATE_PYTHON = "/Users/fkampf/Library/r-miniconda-arm64/envs/r-reticulate/bin/python"
+)
+
+# 2) Load the R arrow package first (registers “file://” handler)
+library(arrow)
+
+# 3) Now bind reticulate → your conda env
+library(reticulate)
+use_condaenv(
+  "/Users/fkampf/Library/r-miniconda-arm64/envs/r-reticulate",
+  required = TRUE
+)
+
+# 4) Import pyarrow.fs (v18.x will ignore the already-registered “file” scheme)
+py_run_string("import pyarrow.fs")
+
+# 5) All your neuroscience + tidyverse packages
 library(malecns)
 library(coconatfly)
 library(fafbseg)
@@ -14,12 +36,18 @@ library(igraph)
 library(tidygraph)
 library(ggraph)
 library(jsonlite)
-library(ggplot2)
 library(reshape2)
-library(bit64)
-library(reticulate)
-fafbseg::flywire_connectome_data("syn")
 library(Matrix)
+library(bit64)
+
+
+# 6) (Optional) neuprint login / quick test
+conna = neuprint_login(dataset='male-cns:v0.9',
+                       server='https://neuprint-cns.janelia.org/')
+mcns.rois = neuprint_ROIs(dataset = 'male-cns:v0.9')
+py_run_string("import pyarrow; print('pyarrow v'+pyarrow.__version__)")
+
+
 ```
 
 ```{r setup, include=FALSE}
@@ -37,31 +65,101 @@ knitr::opts_chunk$set(
 
 ## 1 Load data
 
-### 1.1 Load male boday annotations
+### 1.1 Load body annotations
 ```{r}
 synapse_threshold=5
 mba<-mcns_body_annotations()
-mba.static<-mcns_body_annotations()
+mba.static<-mba
 mba<-mba%>%mutate(type=ifelse(type=='',NA,type))
 mba <- mba %>%
-  mutate(
-    type = case_when(
-      grepl("putative_ppk23", receptor_type) ~ "m-cell",
-      grepl("putative_ppk25", receptor_type) ~ "f-cell",
-      TRUE ~ type
-    )
-  )%>%
+  mutate(type=coalesce(type,flywire_type,manc_type,hemibrain_type))%>%
   mutate(cachero.type = str_extract(synonyms, "(?<=Cachero 2010:)[^;]+") %>%
                             str_trim())
-flytable<-flytable_query("select * from info")%>%
-  mutate(cell_type=coalesce(malecns_type,cell_type,hemibrain_type,cb_type))
-flytable.sub <- flytable%>%
-  select(cell_type,malecns_type,notes,morphology_group,dimorphism,matching_notes,supertype,synonyms)
+
+
+flytable<-flytable_query("select * from info")
 
 ```
 
+### 1.2 Function to load connectivity
+```{r}
+fetch.connectivity.fw <- function(flytable = NULL, synapse_threshold = 5) {
+  if (is.null(flytable)) {
+    flytable <- flytable_query("select * from info")
+  }
+
+  fw.ids <- flytable %>%
+    pull(root_id) %>%
+    unique()
+
+  connectivity <- cf_partners(
+      cf_ids(flywire = fw.ids),
+      partners  = "o",
+      threshold = synapse_threshold
+    ) %>%
+    select(pre_id, post_id, weight)
+
+  # helper to build a lookup table
+  annotate <- flytable %>%
+    select(
+      root_id,
+      cell_type,
+      fru_dsx,
+      top_nt,
+      malecns_type,
+      hemibrain_type
+    ) %>%
+    mutate(root_id = as.integer64(root_id))
+
+  connectivity %>%
+    # pre side
+    left_join(
+      annotate %>%
+        rename(
+          pre_id          = root_id,
+          pre_type        = cell_type,
+          pre_fru_dsx     = fru_dsx,
+          pre_nt          = top_nt,
+          pre_mcns_type   = malecns_type,
+          pre_hemibrain_type = hemibrain_type
+        ),
+      by = "pre_id"
+    ) %>%
+    # post side
+    left_join(
+      annotate %>%
+        rename(
+          post_id         = root_id,
+          post_type       = cell_type,
+          post_fru_dsx    = fru_dsx,
+          post_nt         = top_nt,
+          post_mcns_type  = malecns_type,
+          post_hemibrain_type = hemibrain_type
+        ),
+      by = "post_id"
+    ) %>%
+    # final column order, no duplicates
+    select(
+      weight,
+      pre_id, post_id,
+      pre_type, post_type,
+      pre_mcns_type, post_mcns_type,
+      pre_hemibrain_type, post_hemibrain_type,
+      pre_fru_dsx, post_fru_dsx,
+      pre_nt, post_nt
+    )
+}
+
+```
+
+### 1.3 Load connectivity
+```{r}
+conn <-fetch.connectivity.fw(flytable)
+conn_save <- conn
 
 
+
+```
 
 ## 2 Adjacency matrix
 ### 2.1 Function adjacency matrix
@@ -122,32 +220,176 @@ calculate_normed_adj_matrix <-function(connectivity,cell.or.type='type',pre.or.p
 }
 ```
 
+load schlegel matching
+```{r}
+load.schlegel.matching <- function(path="/Users/fkampf/mappings.json"){
+schlegel.matching <- fromJSON("/Users/fkampf/mappings.json")
+schlegel.matching.df <- data.frame(schlegel.matching)
+
+
+library(tidyr)
+library(dplyr)
+
+schlegel.matching.df.formatted <- schlegel.matching.df %>%
+  pivot_longer(
+    cols = matches("^(FlyWire|MaleCNS)\\."),
+    names_to = "ID",
+    values_to = "Label"
+  ) %>%
+  mutate(
+    Dataset = case_when(
+      str_starts(ID, "FlyWire") ~ "fw",
+      str_starts(ID, "MaleCNS") ~ "mcns",
+      TRUE ~ "Other"
+    ),
+    ID = str_remove(ID, "^(FlyWire|MaleCNS)\\.")
+  )%>%
+  rename(bodyid=ID,type=Label,dataset=Dataset)
+return(schlegel.matching.df.formatted)
+}
+schlegel.matching<-load.schlegel.matching()%>%filter(dataset=='fw')
+```
+
+
+Get aPN1, vPN1, JO-B, vpoEN, vpoIN, and all other via schlegel matching and mcns
+```{r}
+majority_vote <- function(x) {
+  x <- na.omit(x)
+  if (length(x) == 0) return(NA)
+  tab <- table(x)
+  top <- which.max(tab)
+  names(tab)[top]
+}
+
+protected<-c('aPN1','aPN1_like','vpoIN','vpoEN')
+
+vPN1.ids  <- mba %>% filter(str_detect(synonyms, 'vPN1')) %>% pull(bodyid)
+aPN1.ids  <- mba %>% filter(str_detect(synonyms, 'aPN1')) %>% pull(bodyid)
+vpoEN.ids <- mba %>% filter(str_detect(type, 'vpoEN'))    %>% pull(bodyid)
+vpoIN.ids <- mba %>% filter(str_detect(type, 'vpoIN'))    %>% pull(bodyid)
+pIP10.ids <- mba %>% filter(str_detect(type, 'pIP10'))    %>% pull(bodyid)
+pMP2.ids  <- mba %>% filter(str_detect(type, 'pMP2'))     %>% pull(bodyid)
+
+aPN1.types <- mba %>% filter(bodyid %in% aPN1.ids,!is.na(type)) %>% pull(type) %>% unique()
+aPN1.groups <- mba %>% filter(bodyid %in% aPN1.ids) %>% pull(group) %>% unique()
+aPN1_like.ids <- mba %>% filter(type %in% aPN1.types | group %in% aPN1.groups) %>% filter(!str_detect(synonyms, 'aPN1')) %>% pull(bodyid)
+
+mba.mod <- mba %>%
+  mutate(
+    type = case_when(
+      bodyid %in% vPN1.ids ~ 'vPN1',
+      bodyid %in% aPN1.ids ~ 'aPN1',
+      bodyid %in% aPN1_like.ids ~ 'aPN1_like',
+      bodyid %in% vpoEN.ids ~ 'vpoEN',
+      bodyid %in% vpoIN.ids ~ 'vpoIN',
+      bodyid %in% pIP10.ids ~ 'pIP10',
+      bodyid %in% pMP2.ids ~ 'pMP2',
+      TRUE ~ type
+    )
+  )
+
+
+mba.per.fw.type <- mba.mod %>%
+  group_by(flywire_type) %>%
+  summarise(
+    bodyid = majority_vote(bodyid),
+    fru_dsx = majority_vote(fru_dsx),
+    consensus_nt = majority_vote(consensus_nt),
+    flywire_type = majority_vote(flywire_type),
+    synonyms = majority_vote(synonyms),
+    receptor_type = majority_vote(receptor_type),
+    cachero.type = majority_vote(cachero.type),
+    mcns.type2 = majority_vote(type),
+    .groups = "drop"
+  )%>%
+  filter(!is.na(flywire_type))
+
+
+conn <- conn_save %>%
+  left_join(mba.per.fw.type%>%
+              select(flywire_type,
+                     synonyms,
+                     cachero.type,
+                     mcns.type2)%>%
+              rename(pre_type=flywire_type,
+                     pre_synonyms=synonyms,
+                     pre_cachero.type=cachero.type,
+                     pre_mcns.type2 = mcns.type2),
+            by='pre_type')%>%
+  left_join(mba.per.fw.type%>%
+              select(flywire_type,
+                     synonyms,
+                     cachero.type,
+                     mcns.type2)%>%
+              rename(post_type=flywire_type,
+                     post_synonyms=synonyms,
+                     post_cachero.type=cachero.type,
+                     post_mcns.type2 = mcns.type2),
+            by='post_type')
+
+```
+
+
+
+
+```{r}
+#Try to get the correct cell types post and pre
+#conn.types <- 
+selected.columns <- colnames(conn)[
+  (grepl('pre', colnames(conn)) | grepl('post', colnames(conn))) &
+    grepl('type', colnames(conn))]
+
+selected.columns.pre <- selected.columns[grepl('pre',selected.columns)]
+selected.columns.post <- selected.columns[grepl('post',selected.columns)]
+```
+
+
 ### 2.1 Create adjacency matrix
 ```{r}
-flytable <- flytable_query("select * from info")
-fw.ids <- flytable%>%pull(root_id)%>%unique()
-  
-conn <- cf_partners(cf_ids(flywire = fw.ids),
-                              partners = 'o',
-                              threshold = synapse_threshold)
+conn_work <- conn
+list.exception <- c('aPN1','aPN1_like','pMP2','pIP10','aSP-k','vpoDN','JO-B','pIP-e','vPN1','vpoIN','vpoEN')
+library(dplyr)
+conn_work$pre_type_exception = NA
+conn_work$post_type_exception = NA
+for (exception in list.exception) {
+  conn_work <- conn_work %>%
+    mutate(pre_type = case_when(
+      if_any(selected.columns.pre, ~ grepl(exception, .)) ~ exception,
+      TRUE ~ pre_type_exception
+    ),
+    post_type_exception = case_when(
+      if_any(selected.columns.post, ~ grepl(exception, .)) ~ exception,
+      TRUE ~ post_type_exception
+    ))
+}
 
-#here is the list of fusing the synonyms into the ytpes in mba before transfering via  flywire_type the names
-mcns.ignorelist <- c('vpoIN','vpoEN','pIP10','AVLP761m','AVLP761m','AVLP762m','AVLP763m')
-fw.ignorelist <- c('CB1078','CB1542')
-mba2fwtype < mba %>%
-  
 
-conn<-conn%>%
-  mutate(type=coalesce(malecns_type,type,hemibrain_type))%>%
-  left_join(flytable%>%
-              select(root_id,synonyms)%>%
-              rename(pre_id=root_id)%>%
-              mutate(pre_id=as.integer64(pre_id),by='pre_id'))%>%
-  left_join(flytable%>%
-              select(root_id,synonyms)%>%
-              rename(post_id=root_id)%>%
-              mutate(post_id=as.integer64(post_id)),by='post_id')
 
+
+conn_work <- conn_work%>%
+  mutate(pre_type=coalesce(pre_type_exception,
+                           pre_cachero.type,
+                           pre_mcns.type2,
+                           pre_mcns_type,
+                           pre_type,
+                           pre_hemibrain_type),
+         post_type=coalesce(post_type_exception,
+                            post_cachero.type,
+                            post_mcns.type2,
+                            post_mcns_type,
+                            post_type,
+                            post_hemibrain_type))%>%
+  mutate(pre_type=if_else(is.na(pre_type),
+                          as.character(pre_id),
+                          pre_type),
+         post_type=if_else(is.na(post_type),
+                           as.character(post_id),
+                           post_type))%>%
+  mutate(pre_type = gsub("[()]", "", pre_type))%>%
+  mutate(post_type = gsub("[()]", "", post_type))
+
+
+#rewrite types
 vPN1.ids  <- mba %>% filter(str_detect(synonyms, 'vPN1')) %>% pull(bodyid)
 aPN1.ids  <- mba %>% filter(str_detect(synonyms, 'aPN1')) %>% pull(bodyid)
 vpoEN.ids <- mba %>% filter(str_detect(type, 'vpoEN'))    %>% pull(bodyid)
@@ -158,9 +400,7 @@ aPN1.types <- mba %>% filter(bodyid %in% aPN1.ids,!is.na(type)) %>% pull(type) %
 aPN1.groups <- mba %>% filter(bodyid %in% aPN1.ids) %>% pull(group) %>% unique()
 aPN1_like.ids <- mba %>% filter(type %in% aPN1.types | group %in% aPN1.groups) %>% filter(!str_detect(synonyms, 'aPN1')) %>% pull(bodyid)
 all.P1.type <- mba%>%filter(grepl('^P1_',type))%>%pull(type)%>%unique()
-
-
-conn <- conn %>%
+conn_work <- conn_work %>%
   mutate(
     pre_type = case_when(
       pre_id %in% vPN1.ids ~ 'vPN1',
@@ -182,47 +422,45 @@ conn <- conn %>%
       post_id %in% pMP2.ids ~ 'pMP2',
       TRUE ~ post_type
     )
-  )%>%
+  ) %>%
   mutate(
     pre_type = case_when(
-      !pre_type %in% c('vPN1','aPN1','vpoEN','vpoIN','pIP10','pMP2','aPN1_like',all.P1.type)&!is.na(pre.cachero.type)~pre.cachero.type,
+      !pre_type %in% c('vPN1','aPN1','vpoEN','vpoIN','pIP10','pMP2','aPN1_like',all.P1.type) & !is.na(pre_cachero.type) ~ pre_cachero.type,
       TRUE ~ pre_type
     ),
     post_type = case_when(
-      !post_type %in% c('vPN1','aPN1','vpoEN','vpoIN','pIP10','pMP2','aPN1_like',all.P1.type)&!is.na(post.cachero.type)~post.cachero.type,
+      !post_type %in% c('vPN1','aPN1','vpoEN','vpoIN','pIP10','pMP2','aPN1_like',all.P1.type) & !is.na(post_cachero.type) ~ post_cachero.type,
+      TRUE ~ post_type
+    )
+  ) %>%
+  mutate(
+    pre_type = case_when(
+      str_detect(pre_type, "TN1a") ~ "TN1a",
+      str_detect(pre_type, "vPR9") ~ "vPR9",
+      TRUE ~ pre_type
+    ),
+    post_type = case_when(
+      str_detect(post_type, "TN1a") ~ "TN1a",
+      str_detect(post_type, "vPR9") ~ "vPR9",
+      TRUE ~ post_type
+    )
+  ) %>%
+  mutate(
+    pre_type = case_when(
+      str_sub(pre_type, 1, 4) %in% c("SNpp", "SNch", "SNta", "SNxx") ~ str_sub(pre_type, 1, 4),
+      TRUE ~ pre_type
+    ),
+    post_type = case_when(
+      str_sub(post_type, 1, 4) %in% c("SNpp", "SNch", "SNta", "SNxx") ~ str_sub(post_type, 1, 4),
       TRUE ~ post_type
     )
   )
-  
-```
-/Users/fkampf/Documents/mcns.paper/2022malecns/matches_mcns_left_right.feather
 
-get types and assign them
-```{r}
-library(arrow)
-conn.wtype<- conn%>%
-  left_join(flytable%>%
-              select(cell_type,root_id)%>%
-              mutate(root_id=as.integer64(root_id))%>%
-              rename(pre_id=root_id,pre_type=cell_type),
-            by='pre_id')%>%
-  left_join(flytable%>%
-              select(cell_type,root_id)%>%
-              mutate(root_id=as.integer64(root_id))%>%
-              rename(post_id=root_id,post_type=cell_type),
-            by='post_id')  
+#conn.wo.gaba <- conn%>%filter(pre_nt!='gaba')
 
 
-
-```
-
-
-
-create matrix
-
-```{r}
-nam <-calculate_normed_adj_matrix(conn.wtype,cell.or.type='type',pre.or.post='avg') #avg
-
+#nam <-calculate_normed_adj_matrix(conn.wo.gaba,cell.or.type='type',pre.or.post='avg') #avg
+nam <-calculate_normed_adj_matrix(conn_work,cell.or.type='type',pre.or.post='avg') #avg
 nam_thresholded <-nam
 
 g.prout.mcns <- graph_from_adjacency_matrix(
@@ -234,34 +472,21 @@ g.prout.mcns <- graph_from_adjacency_matrix(
 ```
 
 
-
 path finding new
 
 
 ```{r}
 
 # Define parameters for path search
-n_paths <-  4       # Number of strongest paths to find for each start-target pair
+n_paths <-  3       # Number of strongest paths to find for each start-target pair
 diversity <- 'otheredges'  # othernodes,otheredges,none
 
-cell_types <- c('CB1076','CB1078', 'CB3710', 'CB2521','CB1542', 'CB1038', 'CB1427', 'CB2556a', 'CB2380') #all
 cell_types <- c('aPN1','vPN1','JO-B') #only JO-B
-
-#cell_types <- c('f-cell','m-cell','AN09B017','AN05B102')
-#cell_types <- c('CB1542','CB1078')
-#cell_types <- start_types
-
 target_cells <- c("vpoEN",'CB1385','CB1385')  # List of target cells
 target_cells <- c(target_cells,'pMP2')
 target_cells <- c(target_cells,mba%>% filter(grepl('aSP-k',synonyms))%>%filter(!is.na(type))%>%pull(type)%>%unique())
-#target_cells <- c('pIP10','pMP2')
 target_cells <- c(target_cells,'vPN1','aPN1','aPN1_like','vpoEN','vpoIN','pIP10','pMP2','aSP-k','pIP-e')
-target_cells <- c("vpoEN",'CB1385','aSP-k')
 
-
-
-#target_cells <- c(target_cells,V(g.prout.mcns)$name[grepl("P1_", V(g.prout.mcns)$name)])
-#target_cells <- c(all.levels.prout.mcns.output%>%filter((post_type=='vpoEN')&(weight>=0.1))%>%pull(pre_type)%>%unique(),target_cells)
 
 # Transform weights using log
 E(g.prout.mcns)$log_weight <- -log(E(g.prout.mcns)$weight)  # Negate to convert to shortest path problem
@@ -381,29 +606,37 @@ nodes_to_keep <- c("JO-B", "JO-B", "CB1078", "CB1542", "CB2108", "CB1383", "CB10
                    "CB2364", "CB3382", "PVLP033", "CB3162", "CB3382", "vpoEN", "SIP124m",
                    "AVLP721m", "AVLP299_c", "DNp55", "CB1385", "AVLP711m", "SIP108m", 
                    "SIP120m", "SIP116m", "SIP114m", "PVLP211m", "pMP2", "AVLP744m")
-nodes_to_keep <- c(nodes_to_keep, unique(all_important_nodes))
 
 in.plots <- c("vPN1", "aPN1", "aPN1_like", "vpoEN", "vpoIN", "pIP10", "pMP2", "JO-B")
-P1_2_add <- conn.wtype%>%
+P1_2_add <- conn_work%>%
   filter(pre_type %in% nodes_to_keep,
          grepl("^P1_", post_type))%>%
   pull(post_type)%>%
   unique()
-nodes_to_keep <- c(unique(all_important_nodes), in.plots)
+
+
+nodes_to_keep <- c(unique(all_important_nodes), in.plots,P1_2_add)
+nodes_to_keep <- c(unique(all_important_nodes))
+nodes_to_keep <- c('pMP2','aPN1_like','pIP10','aIP-g','aDT-e','pIP-e','vpoEN','aPN1','P1_14a','JO-B','WED118','aDT-g','aSP-a','aSP-k','vpoIN','vPN1')
 
 
 
-conn
+#nodes_to_keep <- c(nodes_to_keep,conn%>%filter(post_type=='IN06B003')%>%filter(grepl('SN',pre_type))%>%pull(pre_type)%>%unique())
+#nodes_to_keep <- c(nodes_to_keep,mba%>%filter(grepl('TN1a',type))%>%pull(type)%>%unique())
+#nodes_to_keep <- c(nodes_to_keep,in.plots,mba%>%filter(grepl('vPR9',type))%>%pull(type)%>%unique())
+
+
+
 # Subset the graph
 g.sub.prout.mcns <- induced_subgraph(g.prout.mcns, vids = V(g.prout.mcns)[name %in% nodes_to_keep])
 
 # Shortest path distances from start_types
 node_names <- V(g.sub.prout.mcns)$name
 distance_to_start <- shortest.paths(g.sub.prout.mcns, to = V(g.sub.prout.mcns)[name %in% cell_types], weights = NA)
-V(g.sub.prout.mcns)$distance_to_start <- ifelse(node_names %in% start_types, 0, as.integer(distance_to_start))
+V(g.sub.prout.mcns)$distance_to_start <- ifelse(node_names %in% cell_types, 0, as.integer(distance_to_start))
 
 # FRU/DSX metadata
-try(fru_dsx_values <- conn %>%
+try(fru_dsx_values <- conn_work %>%
       group_by(pre_type, post_type) %>%
       mutate(pre_fru_dsx = !is.na(pre_fru_dsx),
              post_fru_dsx = !is.na(post_fru_dsx)) %>%
@@ -414,7 +647,17 @@ try(fru_dsx_values <- conn %>%
                    names_to = c("side", ".value"), names_sep = "_") %>%
       select(-side) %>% distinct())
 
-
+# NT metadata
+nt_values <- conn_work %>%
+  group_by(pre_type, post_type) %>%
+  mutate(pre_nt = first(pre_nt),
+         post_nt = first(post_nt)) %>%
+  summarize(pre_nt = first(pre_nt),
+            post_nt = first(post_nt)) %>%
+  ungroup() %>%
+  pivot_longer(cols = c(pre_nt, post_nt, pre_type, post_type),
+               names_to = c("side", ".value"), names_sep = "_") %>%
+  select(-side) %>% distinct()
 
 # Match metadata to vertices
 try(nt_for_vertices <- nt_values$nt[match(V(g.sub.prout.mcns)$name, nt_values$type)])
@@ -436,7 +679,7 @@ weights_above_1 <- weights_all[weights_all > 1]
 
 # Compute quantiles and round nicely for legend clarity
 quantile_breaks <- quantile(weights_above_1, probs = c(0, 0.25, 0.5, 0.75, 1), na.rm = TRUE)
-rounded_breaks <- unique(round(quantile_breaks))  # ensure no duplicated breaks
+rounded_breaks <- unique(round(quantile_breaks,2))  # ensure no duplicated breaks
 
 # Handle edge case: fewer than 5 unique bins
 if (length(rounded_breaks) < 5) {
@@ -456,13 +699,15 @@ labels <- paste(head(rounded_breaks, -1), tail(rounded_breaks, -1), sep = "–")
 E(g.sub.prout.mcns)$arrow_class_label <- labels[E(g.sub.prout.mcns)$arrow_class]
 
 # Assign 0 and "0" for weights <= 1
-
 E(g.sub.prout.mcns)$arrow_class[weights_all <= 1] <- 0
 E(g.sub.prout.mcns)$arrow_class_label[weights_all <= 1] <- "≤1"
 
 # Create network in Cytoscape
 RCy3::createNetworkFromIgraph(g.sub.prout.mcns)
+```
 
+
+```{r}
 # Plot kernel density estimate in base R
 d <- density(weights_above_1)
 plot(d, main = "KDE Plot of Weights", xlab = "Weight", ylab = "Density")

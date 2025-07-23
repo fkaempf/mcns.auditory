@@ -266,13 +266,10 @@ n_paths <-  3       # Number of strongest paths to find for each start-target pa
 diversity <- 'otheredges'  # othernodes,otheredges,none
 
 cell_types <- c('aPN1','vPN1','JO-B') #only JO-B
-
-
 target_cells <- c("vpoEN",'CB1385','CB1385')  # List of target cells
 target_cells <- c(target_cells,'pMP2')
 target_cells <- c(target_cells,mba%>% filter(grepl('aSP-k',synonyms))%>%filter(!is.na(type))%>%pull(type)%>%unique())
 target_cells <- c(target_cells,'vPN1','aPN1','aPN1_like','vpoEN','vpoIN','pIP10','pMP2','aSP-k','pIP-e')
-
 
 
 # Transform weights using log
