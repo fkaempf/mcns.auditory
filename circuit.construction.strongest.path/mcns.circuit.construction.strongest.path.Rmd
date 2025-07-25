@@ -18,9 +18,9 @@ library(ggplot2)
 library(reshape2)
 library(Matrix)
 
-conna = neuprint_login(dataset='male-cns:v0.9',server='https://neuprint-cns.janelia.org/')
-mcns.rois = neuprint_ROIs(dataset = 'male-cns:v0.9')
-neuprint_get_synapses(13693,roi='VNC')
+#conna = neuprint_login(dataset='male-cns:v0.9',server='https://neuprint-cns.janelia.org/')
+#mcns.rois = neuprint_ROIs(dataset = 'male-cns:v0.9')
+#neuprint_get_synapses(13693,roi='VNC')
 ```
 
 ```{r setup, include=FALSE}
@@ -69,15 +69,15 @@ fetch_connectivity <- function(synapse_threshold = 5) {
                               threshold = synapse_threshold)
   connectivity <- connectivity %>%
     left_join(mba %>%
-                select("type", "bodyid",'fru_dsx','consensus_nt','flywire_type','synonyms','receptor_type','cachero.type') %>%
+                select("type", "bodyid",'fru_dsx','consensus_nt','flywire_type','synonyms','receptor_type','cachero.type','dimorphism') %>%
                 mutate(bodyid=as.integer(bodyid))%>%
-                rename(pre_type = type,pre_fru_dsx=fru_dsx,pre_nt=consensus_nt,pre_fw_type=flywire_type,pre_synonyms=synonyms,pre_receptor_type=receptor_type,pre.cachero.type=cachero.type),
+                rename(pre_type = type,pre_fru_dsx=fru_dsx,pre_nt=consensus_nt,pre_fw_type=flywire_type,pre_synonyms=synonyms,pre_receptor_type=receptor_type,pre.dimorphism=dimorphism,pre.cachero.type=cachero.type),
               by = c('pre_id'='bodyid'))%>%
     rename(post_type = type)%>%
     left_join(mba %>%
-                select("bodyid",'fru_dsx','consensus_nt','flywire_type','synonyms','receptor_type','cachero.type') %>%
+                select("bodyid",'fru_dsx','consensus_nt','flywire_type','synonyms','receptor_type','cachero.type','dimorphism') %>%
                 mutate(bodyid=as.integer(bodyid))%>%
-                rename(post_fru_dsx=fru_dsx,post_nt=consensus_nt,post_fw_type=flywire_type,post_synonyms=synonyms,post_receptor_type=receptor_type,post.cachero.type=cachero.type),
+                rename(post_fru_dsx=fru_dsx,post_nt=consensus_nt,post_fw_type=flywire_type,post_synonyms=synonyms,post_receptor_type=receptor_type,post.dimorphism=dimorphism,post.cachero.type=cachero.type),
               by = c('post_id'='bodyid'))
   return(connectivity)
 }
@@ -182,7 +182,8 @@ pIP10.ids <- mba %>% filter(str_detect(type, 'pIP10'))    %>% pull(bodyid)
 pMP2.ids  <- mba %>% filter(str_detect(type, 'pMP2'))     %>% pull(bodyid)
 aPN1.types <- mba %>% filter(bodyid %in% aPN1.ids,!is.na(type)) %>% pull(type) %>% unique()
 aPN1.groups <- mba %>% filter(bodyid %in% aPN1.ids) %>% pull(group) %>% unique()
-aPN1_like.ids <- mba %>% filter(type %in% aPN1.types | group %in% aPN1.groups) %>% filter(!str_detect(synonyms, 'aPN1')) %>% pull(bodyid)
+manual.aPN1_like = c('CB1076','CB1078','SAD052')
+aPN1_like.ids <- mba %>% filter(type %in% aPN1.types | type %in% manual.aPN1_like) %>% filter(!str_detect(synonyms, 'aPN1')) %>% pull(bodyid)
 all.P1.type <- mba%>%filter(grepl('^P1_',type))%>%pull(type)%>%unique()
 conn <- conn %>%
   mutate(
@@ -243,7 +244,7 @@ conn <- conn %>%
 #conn.wo.gaba <- conn%>%filter(pre_nt!='gaba')
 
 
-nam <-calculate_normed_adj_matrix(conn.wo.gaba,cell.or.type='type',pre.or.post='avg') #avg
+#nam <-calculate_normed_adj_matrix(conn.wo.gaba,cell.or.type='type',pre.or.post='avg') #avg
 nam <-calculate_normed_adj_matrix(conn,cell.or.type='type',pre.or.post='avg') #avg
 nam_thresholded <-nam
 
@@ -266,11 +267,12 @@ n_paths <-  3       # Number of strongest paths to find for each start-target pa
 diversity <- 'otheredges'  # othernodes,otheredges,none
 
 cell_types <- c('aPN1','vPN1','JO-B') #only JO-B
+cell_types <- c('vPN1') #only JO-B
 target_cells <- c("vpoEN",'CB1385','CB1385')  # List of target cells
 target_cells <- c(target_cells,'pMP2')
 target_cells <- c(target_cells,mba%>% filter(grepl('aSP-k',synonyms))%>%filter(!is.na(type))%>%pull(type)%>%unique())
 target_cells <- c(target_cells,'vPN1','aPN1','aPN1_like','vpoEN','vpoIN','pIP10','pMP2','aSP-k','pIP-e')
-
+target_cells <- c(mba%>% filter(grepl('P1_',type))%>%filter(!is.na(type))%>%pull(type)%>%unique())
 
 # Transform weights using log
 E(g.prout.mcns)$log_weight <- -log(E(g.prout.mcns)$weight)  # Negate to convert to shortest path problem
@@ -401,7 +403,7 @@ P1_2_add <- conn%>%
 
 nodes_to_keep <- c(unique(all_important_nodes), in.plots,P1_2_add)
 nodes_to_keep <- c(unique(all_important_nodes))
-nodes_to_keep <- c('pMP2','aPN1_like','pIP10','aIP-g','aDT-e','pIP-e','vpoEN','aPN1','P1_14a','JO-B','WED118','aDT-g','aSP-a','aSP-k','vpoIN','vPN1')
+#nodes_to_keep <- c('pMP2','aPN1_like','pIP10','aIP-g','aDT-e','pIP-e','vpoEN','aPN1','P1_14a','JO-B','WED118','aDT-g','aSP-a','aSP-k','vpoIN','vPN1','P1_6a','DNp55')
 
 
 
@@ -432,22 +434,70 @@ try(fru_dsx_values <- conn %>%
       select(-side) %>% distinct())
 
 # NT metadata
+# Helper function: majority vote (mode), returns first mode if tie
+majority_vote <- function(x) {
+  x <- x[!is.na(x)]
+  if (length(x) == 0) return(NA)
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))]
+}
+
+# Compute majority NT per pre_type and post_type
 nt_values <- conn %>%
   group_by(pre_type, post_type) %>%
-  mutate(pre_nt = first(pre_nt),
-         post_nt = first(post_nt)) %>%
-  summarize(pre_nt = first(pre_nt),
-            post_nt = first(post_nt)) %>%
-  ungroup() %>%
+  summarize(
+    pre_nt = majority_vote(pre_nt),
+    post_nt = majority_vote(post_nt),
+    .groups = "drop"
+  ) %>%
   pivot_longer(cols = c(pre_nt, post_nt, pre_type, post_type),
-               names_to = c("side", ".value"), names_sep = "_") %>%
-  select(-side) %>% distinct()
+               names_to = c("side", ".value"),
+               names_sep = "_") %>%
+  select(-side) %>%
+  distinct()
+
+
+
 
 # Match metadata to vertices
-try(nt_for_vertices <- nt_values$nt[match(V(g.sub.prout.mcns)$name, nt_values$type)])
-try(fru_dsx_for_vertices <- fru_dsx_values$fru[match(V(g.sub.prout.mcns)$name, fru_dsx_values$type)])
+nt_for_vertices <- nt_values$nt[match(V(g.sub.prout.mcns)$name, nt_values$type)]
 V(g.sub.prout.mcns)$nt <- nt_for_vertices
-try(V(g.sub.prout.mcns)$fru_dsx <- fru_dsx_for_vertices)
+
+#NT for edges
+el <- as_edgelist(g.sub.prout.mcns)
+edge_sources <- el[, 1]
+
+# Create named vector manually instead of using deframe
+nt_table <- nt_values %>%
+  distinct(type, nt) %>%
+  filter(!is.na(nt))
+
+nt_lookup <- setNames(nt_table$nt, nt_table$type)
+
+# Assign NT to each edge by matching the source node name to nt_lookup
+E(g.sub.prout.mcns)$edge_nt <- nt_lookup[edge_sources]
+
+# Optionally fill NAs
+E(g.sub.prout.mcns)$edge_nt[is.na(E(g.sub.prout.mcns)$edge_nt)] <- "unknown"
+
+dimorphism_values <- conn %>%
+  group_by(pre_type, post_type) %>%
+  summarize(
+    pre_dimorphism = majority_vote(pre.dimorphism),
+    post_dimorphism = majority_vote(post.dimorphism),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(cols = c(pre_dimorphism, post_dimorphism, pre_type, post_type),
+               names_to = c("side", ".value"),
+               names_sep = "_") %>%
+  select(-side) %>%
+  distinct()
+
+dimorphism_lookup <- setNames(dimorphism_values$dimorphism, dimorphism_values$type)
+V(g.sub.prout.mcns)$dimorphism <- dimorphism_lookup[V(g.sub.prout.mcns)$name]
+V(g.sub.prout.mcns)$dimorphism[is.na(V(g.sub.prout.mcns)$dimorphism)] <- "ismorphic"
+
+
 
 # P1-P1 flag
 el <- as_edgelist(g.sub.prout.mcns)

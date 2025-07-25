@@ -105,6 +105,7 @@ fetch.connectivity.fw <- function(flytable = NULL, synapse_threshold = 5) {
       root_id,
       cell_type,
       fru_dsx,
+      dimorphism,
       top_nt,
       malecns_type,
       hemibrain_type
@@ -121,7 +122,8 @@ fetch.connectivity.fw <- function(flytable = NULL, synapse_threshold = 5) {
           pre_fru_dsx     = fru_dsx,
           pre_nt          = top_nt,
           pre_mcns_type   = malecns_type,
-          pre_hemibrain_type = hemibrain_type
+          pre_hemibrain_type = hemibrain_type,
+          pre.dimorphism = dimorphism,
         ),
       by = "pre_id"
     ) %>%
@@ -134,7 +136,9 @@ fetch.connectivity.fw <- function(flytable = NULL, synapse_threshold = 5) {
           post_fru_dsx    = fru_dsx,
           post_nt         = top_nt,
           post_mcns_type  = malecns_type,
-          post_hemibrain_type = hemibrain_type
+          post_hemibrain_type = hemibrain_type,
+          post.dimorphism = dimorphism,
+          
         ),
       by = "post_id"
     ) %>%
@@ -146,7 +150,8 @@ fetch.connectivity.fw <- function(flytable = NULL, synapse_threshold = 5) {
       pre_mcns_type, post_mcns_type,
       pre_hemibrain_type, post_hemibrain_type,
       pre_fru_dsx, post_fru_dsx,
-      pre_nt, post_nt
+      pre_nt, post_nt,
+      pre.dimorphism, post.dimorphism
     )
 }
 
@@ -261,7 +266,7 @@ majority_vote <- function(x) {
   names(tab)[top]
 }
 
-protected<-c('aPN1','aPN1_like','vpoIN','vpoEN')
+
 
 vPN1.ids  <- mba %>% filter(str_detect(synonyms, 'vPN1')) %>% pull(bodyid)
 aPN1.ids  <- mba %>% filter(str_detect(synonyms, 'aPN1')) %>% pull(bodyid)
@@ -272,7 +277,8 @@ pMP2.ids  <- mba %>% filter(str_detect(type, 'pMP2'))     %>% pull(bodyid)
 
 aPN1.types <- mba %>% filter(bodyid %in% aPN1.ids,!is.na(type)) %>% pull(type) %>% unique()
 aPN1.groups <- mba %>% filter(bodyid %in% aPN1.ids) %>% pull(group) %>% unique()
-aPN1_like.ids <- mba %>% filter(type %in% aPN1.types | group %in% aPN1.groups) %>% filter(!str_detect(synonyms, 'aPN1')) %>% pull(bodyid)
+manual.aPN1_like = c('CB1076','CB1078','SAD052')
+aPN1_like.ids <- mba %>% filter(type %in% aPN1.types | group %in% manual.aPN1_like) %>% filter(!str_detect(synonyms, 'aPN1')) %>% pull(bodyid)
 
 mba.mod <- mba %>%
   mutate(
@@ -347,13 +353,13 @@ selected.columns.post <- selected.columns[grepl('post',selected.columns)]
 ### 2.1 Create adjacency matrix
 ```{r}
 conn_work <- conn
-list.exception <- c('aPN1','aPN1_like','pMP2','pIP10','aSP-k','vpoDN','JO-B','pIP-e','vPN1','vpoIN','vpoEN')
+list.exception <- c('aPN1','aPN1_like','pMP2','pIP10','aSP-k','vpoDN','JO-B','pIP-e','vPN1','vpoIN','vpoEN','vpoDN')
 library(dplyr)
 conn_work$pre_type_exception = NA
 conn_work$post_type_exception = NA
 for (exception in list.exception) {
   conn_work <- conn_work %>%
-    mutate(pre_type = case_when(
+    mutate(pre_type_exception = case_when(
       if_any(selected.columns.pre, ~ grepl(exception, .)) ~ exception,
       TRUE ~ pre_type_exception
     ),
@@ -362,7 +368,23 @@ for (exception in list.exception) {
       TRUE ~ post_type_exception
     ))
 }
-
+conn_work <- conn_work %>%
+  mutate(
+    pre_type_exception = case_when(
+      if_any(
+        c(pre_type_exception, pre_cachero.type, pre_mcns.type2, pre_mcns_type, pre_type, pre_hemibrain_type),
+        ~ .x %in% manual.aPN1_like
+      ) ~ "aPN1_like",
+      TRUE ~ pre_type_exception
+    ),
+    post_type_exception = case_when(
+      if_any(
+        c(post_type_exception, post_cachero.type, post_mcns.type2, post_mcns_type, post_type, post_hemibrain_type),
+        ~ .x %in% manual.aPN1_like
+      ) ~ "aPN1_like",
+      TRUE ~ post_type_exception
+    )
+  )
 
 
 
@@ -390,71 +412,18 @@ conn_work <- conn_work%>%
 
 
 #rewrite types
-vPN1.ids  <- mba %>% filter(str_detect(synonyms, 'vPN1')) %>% pull(bodyid)
-aPN1.ids  <- mba %>% filter(str_detect(synonyms, 'aPN1')) %>% pull(bodyid)
-vpoEN.ids <- mba %>% filter(str_detect(type, 'vpoEN'))    %>% pull(bodyid)
-vpoIN.ids <- mba %>% filter(str_detect(type, 'vpoIN'))    %>% pull(bodyid)
-pIP10.ids <- mba %>% filter(str_detect(type, 'pIP10'))    %>% pull(bodyid)
-pMP2.ids  <- mba %>% filter(str_detect(type, 'pMP2'))     %>% pull(bodyid)
-aPN1.types <- mba %>% filter(bodyid %in% aPN1.ids,!is.na(type)) %>% pull(type) %>% unique()
-aPN1.groups <- mba %>% filter(bodyid %in% aPN1.ids) %>% pull(group) %>% unique()
-aPN1_like.ids <- mba %>% filter(type %in% aPN1.types | group %in% aPN1.groups) %>% filter(!str_detect(synonyms, 'aPN1')) %>% pull(bodyid)
-all.P1.type <- mba%>%filter(grepl('^P1_',type))%>%pull(type)%>%unique()
-conn_work <- conn_work %>%
-  mutate(
-    pre_type = case_when(
-      pre_id %in% vPN1.ids ~ 'vPN1',
-      pre_id %in% aPN1.ids ~ 'aPN1',
-      pre_id %in% aPN1_like.ids ~ 'aPN1_like',
-      pre_id %in% vpoEN.ids ~ 'vpoEN',
-      pre_id %in% vpoIN.ids ~ 'vpoIN',
-      pre_id %in% pIP10.ids ~ 'pIP10',
-      pre_id %in% pMP2.ids ~ 'pMP2',
-      TRUE ~ pre_type
-    ),
-    post_type = case_when(
-      post_id %in% vPN1.ids ~ 'vPN1',
-      post_id %in% aPN1.ids ~ 'aPN1',
-      post_id %in% aPN1_like.ids ~ 'aPN1_like',
-      post_id %in% vpoEN.ids ~ 'vpoEN',
-      post_id %in% vpoIN.ids ~ 'vpoIN',
-      post_id %in% pIP10.ids ~ 'pIP10',
-      post_id %in% pMP2.ids ~ 'pMP2',
-      TRUE ~ post_type
-    )
-  ) %>%
-  mutate(
-    pre_type = case_when(
-      !pre_type %in% c('vPN1','aPN1','vpoEN','vpoIN','pIP10','pMP2','aPN1_like',all.P1.type) & !is.na(pre_cachero.type) ~ pre_cachero.type,
-      TRUE ~ pre_type
-    ),
-    post_type = case_when(
-      !post_type %in% c('vPN1','aPN1','vpoEN','vpoIN','pIP10','pMP2','aPN1_like',all.P1.type) & !is.na(post_cachero.type) ~ post_cachero.type,
-      TRUE ~ post_type
-    )
-  ) %>%
-  mutate(
-    pre_type = case_when(
-      str_detect(pre_type, "TN1a") ~ "TN1a",
-      str_detect(pre_type, "vPR9") ~ "vPR9",
-      TRUE ~ pre_type
-    ),
-    post_type = case_when(
-      str_detect(post_type, "TN1a") ~ "TN1a",
-      str_detect(post_type, "vPR9") ~ "vPR9",
-      TRUE ~ post_type
-    )
-  ) %>%
-  mutate(
-    pre_type = case_when(
-      str_sub(pre_type, 1, 4) %in% c("SNpp", "SNch", "SNta", "SNxx") ~ str_sub(pre_type, 1, 4),
-      TRUE ~ pre_type
-    ),
-    post_type = case_when(
-      str_sub(post_type, 1, 4) %in% c("SNpp", "SNch", "SNta", "SNxx") ~ str_sub(post_type, 1, 4),
-      TRUE ~ post_type
-    )
-  )
+vPN1.ids  <- flytable %>% filter(str_detect(synonyms, 'vPN1')) %>% pull(root_id)
+aPN1.ids  <- flytable %>% filter(str_detect(synonyms, 'aPN1')) %>% pull(root_id)
+vpoEN.ids <- flytable %>% filter(str_detect(cell_type, 'vpoEN'))    %>% pull(root_id)
+vpoIN.ids <- flytable %>% filter(str_detect(cell_type, 'vpoIN'))    %>% pull(root_id)
+pIP10.ids <- flytable %>% filter(str_detect(cell_type, 'pIP10'))    %>% pull(root_id)
+pMP2.ids  <- flytable %>% filter(str_detect(cell_type, 'pMP2'))     %>% pull(root_id)
+aPN1.types <- flytable %>% filter(root_id %in% aPN1.ids,!is.na(cell_type)) %>% pull(cell_type) %>% unique()
+
+manual.aPN1_like = c('CB1076','CB1078','SAD052')
+aPN1_like.ids <- flytable %>% filter(cell_type %in% aPN1.types | cell_type %in% manual.aPN1_like) %>% filter(!str_detect(synonyms, 'aPN1')) %>% pull(root_id)
+all.P1.type <- flytable%>%filter(grepl('^P1_',cell_type))%>%pull(cell_type)%>%unique()
+
 
 #conn.wo.gaba <- conn%>%filter(pre_nt!='gaba')
 
@@ -481,12 +450,11 @@ path finding new
 n_paths <-  3       # Number of strongest paths to find for each start-target pair
 diversity <- 'otheredges'  # othernodes,otheredges,none
 
-cell_types <- c('aPN1','vPN1','JO-B') #only JO-B
-target_cells <- c("vpoEN",'CB1385','CB1385')  # List of target cells
+cell_types <- c('aPN1','JO-B','aPN1_like','vpoIN') #only JO-B
 target_cells <- c(target_cells,'pMP2')
 target_cells <- c(target_cells,mba%>% filter(grepl('aSP-k',synonyms))%>%filter(!is.na(type))%>%pull(type)%>%unique())
-target_cells <- c(target_cells,'vPN1','aPN1','aPN1_like','vpoEN','vpoIN','pIP10','pMP2','aSP-k','pIP-e')
-
+target_cells <- c(target_cells,'pMP2','pIP10','aIP-g','aDT-e','pIP-e','vpoEN','aPN1','P1_14a','JO-B','WED118','aDT-g','aSP-a','aSP-k','vpoIN','vPN1','P1_6a','DNp55','vpoDN','aPN1_like')
+target_cells <- unique(target_cells)
 
 # Transform weights using log
 E(g.prout.mcns)$log_weight <- -log(E(g.prout.mcns)$weight)  # Negate to convert to shortest path problem
@@ -617,11 +585,11 @@ P1_2_add <- conn_work%>%
 
 nodes_to_keep <- c(unique(all_important_nodes), in.plots,P1_2_add)
 nodes_to_keep <- c(unique(all_important_nodes))
-nodes_to_keep <- c('pMP2','aPN1_like','pIP10','aIP-g','aDT-e','pIP-e','vpoEN','aPN1','P1_14a','JO-B','WED118','aDT-g','aSP-a','aSP-k','vpoIN','vPN1')
+nodes_to_keep <- c('pMP2','aPN1_like','pIP10','aIP-g','aDT-e','pIP-e','vpoEN','aPN1','P1_14a','JO-B','WED118','aDT-g','aSP-a','aSP-k','vpoIN','vPN1','P1_6a','DNp55','vpoDN')
 
 
 
-#nodes_to_keep <- c(nodes_to_keep,conn%>%filter(post_type=='IN06B003')%>%filter(grepl('SN',pre_type))%>%pull(pre_type)%>%unique())
+#nodes_to_keep <- c(nodes_to_keep,conn_work%>%filter(post_type=='IN06B003')%>%filter(grepl('SN',pre_type))%>%pull(pre_type)%>%unique())
 #nodes_to_keep <- c(nodes_to_keep,mba%>%filter(grepl('TN1a',type))%>%pull(type)%>%unique())
 #nodes_to_keep <- c(nodes_to_keep,in.plots,mba%>%filter(grepl('vPR9',type))%>%pull(type)%>%unique())
 
@@ -648,22 +616,70 @@ try(fru_dsx_values <- conn_work %>%
       select(-side) %>% distinct())
 
 # NT metadata
+# Helper function: majority vote (mode), returns first mode if tie
+majority_vote <- function(x) {
+  x <- x[!is.na(x)]
+  if (length(x) == 0) return(NA)
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))]
+}
+
+# Compute majority NT per pre_type and post_type
 nt_values <- conn_work %>%
   group_by(pre_type, post_type) %>%
-  mutate(pre_nt = first(pre_nt),
-         post_nt = first(post_nt)) %>%
-  summarize(pre_nt = first(pre_nt),
-            post_nt = first(post_nt)) %>%
-  ungroup() %>%
+  summarize(
+    pre_nt = majority_vote(pre_nt),
+    post_nt = majority_vote(post_nt),
+    .groups = "drop"
+  ) %>%
   pivot_longer(cols = c(pre_nt, post_nt, pre_type, post_type),
-               names_to = c("side", ".value"), names_sep = "_") %>%
-  select(-side) %>% distinct()
+               names_to = c("side", ".value"),
+               names_sep = "_") %>%
+  select(-side) %>%
+  distinct()
+
+
+
 
 # Match metadata to vertices
-try(nt_for_vertices <- nt_values$nt[match(V(g.sub.prout.mcns)$name, nt_values$type)])
-try(fru_dsx_for_vertices <- fru_dsx_values$fru[match(V(g.sub.prout.mcns)$name, fru_dsx_values$type)])
+nt_for_vertices <- nt_values$nt[match(V(g.sub.prout.mcns)$name, nt_values$type)]
 V(g.sub.prout.mcns)$nt <- nt_for_vertices
-try(V(g.sub.prout.mcns)$fru_dsx <- fru_dsx_for_vertices)
+
+#NT for edges
+el <- as_edgelist(g.sub.prout.mcns)
+edge_sources <- el[, 1]
+
+# Create named vector manually instead of using deframe
+nt_table <- nt_values %>%
+  distinct(type, nt) %>%
+  filter(!is.na(nt))
+
+nt_lookup <- setNames(nt_table$nt, nt_table$type)
+
+# Assign NT to each edge by matching the source node name to nt_lookup
+E(g.sub.prout.mcns)$edge_nt <- nt_lookup[edge_sources]
+
+# Optionally fill NAs
+E(g.sub.prout.mcns)$edge_nt[is.na(E(g.sub.prout.mcns)$edge_nt)] <- "unknown"
+
+dimorphism_values <- conn_work %>%
+  group_by(pre_type, post_type) %>%
+  summarize(
+    pre_dimorphism = majority_vote(pre.dimorphism),
+    post_dimorphism = majority_vote(post.dimorphism),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(cols = c(pre_dimorphism, post_dimorphism, pre_type, post_type),
+               names_to = c("side", ".value"),
+               names_sep = "_") %>%
+  select(-side) %>%
+  distinct()
+
+dimorphism_lookup <- setNames(dimorphism_values$dimorphism, dimorphism_values$type)
+V(g.sub.prout.mcns)$dimorphism <- dimorphism_lookup[V(g.sub.prout.mcns)$name]
+V(g.sub.prout.mcns)$dimorphism[is.na(V(g.sub.prout.mcns)$dimorphism)] <- "ismorphic"
+
+
 
 # P1-P1 flag
 el <- as_edgelist(g.sub.prout.mcns)
